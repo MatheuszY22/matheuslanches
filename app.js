@@ -100,7 +100,7 @@ function renderLogin() {
     S.askPass = false; localStorage.setItem('lanche-user', S.user); render();
   };
   $('#entrar').onclick = go;
-  $('#app').querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => e.key === 'Enter' && go()));
+  $('#app').querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => { if (e.key === 'Enter') go(); }));
   $('#nome').oninput = () => { if (S.askPass && $('#nome').value.trim().toLowerCase() !== ADMIN_NAME) { S.askPass = false; const v = $('#nome').value; renderLogin(); $('#nome').value = v; $('#nome').focus(); } };
   $('#nome').focus();
 }
