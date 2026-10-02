@@ -216,9 +216,9 @@ async function saveProd(id) {
   const name = $('#pn').value.trim(), price = parseFloat($('#pp').value);
   if (!name || isNaN(price)) return toast('Informe nome e valor');
   await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked });
-  closeModal(); toast('Produto salvo');
+  closeModal(); render(); toast('Produto salvo');
 }
-async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); }
+async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); render(); }
 
 function tabQr() {
   const url = location.origin + location.pathname;
