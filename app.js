@@ -108,12 +108,12 @@ function logout() { S.user = ''; S.admin = false; S.cart = []; localStorage.remo
 
 /* --- cliente --- */
 function renderMenu() {
-  const ps = Store.data.products.filter((p) => p.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+  const ps = Store.data.products.slice().sort((a, b) => a.name.localeCompare(b.name));
   const n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
   $('#app').innerHTML = `<div class="top"><h1>🍔 Olá, ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div>
     <div class="wrap">${ps.length ? '' : '<p>Nenhum produto cadastrado ainda.</p>'}<div class="grid">${ps.map((p) => `
-      <div class="prod" onclick="pick('${p.id}')">${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
-      <div class="i"><b>${esc(p.name)}</b><span class="pr">${money(p.price)}</span>${p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}</div></div>`).join('')}</div><div class="pad"></div></div>
+      <div class="prod ${p.active === false ? 'off' : ''}" ${p.active === false ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
+      <div class="i"><b>${esc(p.name)}</b><span class="pr">${p.active === false ? 'Esgotado' : money(p.price)}</span>${p.active !== false && p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}</div></div>`).join('')}</div><div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>🛒 ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
 }
 const cartTotal = () => S.cart.reduce((a, i) => a + i.price * i.qty, 0);
@@ -139,6 +139,8 @@ function qty(k, d) { S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k
 async function checkout(method) {
   const st = Store.data.settings;
   if (method === 'pix' && !st.pixKey) return toast('Pix ainda não configurado pelo Matheus');
+  const paused = S.cart.filter((i) => Store.data.products.find((p) => p.id === i.productId)?.active === false);
+  if (paused.length) { S.cart = S.cart.filter((i) => !paused.includes(i)); render(); closeModal(); return toast(paused.map((i) => i.name).join(', ') + ' acabou e saiu do pedido'); }
   const order = { id: uid(), customer: S.user, items: S.cart.map((i) => ({ ...i })), total: cartTotal(), status: 'pending', method, createdAt: Date.now(), paidAt: null };
   await Store.put('orders', order); S.cart = []; render();
   if (method === 'prazo') return modal(`<h2>Pedido anotado ✅</h2><p>Total de ${money(order.total)} anotado no nome de <b>${esc(order.customer)}</b>. Pague depois com o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>`);
@@ -186,8 +188,13 @@ async function payAll(c) { if (!confirm(`Marcar tudo de ${c} como pago?`)) retur
 
 function tabProd() {
   $('#tab').innerHTML = `<button class="btn" onclick="editProd()">+ Novo produto</button><br><br>${Store.data.products.map((p) => `<div class="panel row" style="border:0">
-    <div style="display:flex;gap:10px;align-items:center">${p.photo ? `<img src="${p.photo}" width="56" height="56" style="object-fit:cover;border-radius:8px">` : '🍽️'}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">oculto</span>' : ''}<br>${money(p.price)}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
-    <button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div>`).join('') || '<p>Nenhum produto ainda.</p>'}`;
+    <div style="display:flex;gap:10px;align-items:center">${p.photo ? `<img src="${p.photo}" width="56" height="56" style="object-fit:cover;border-radius:8px">` : '🍽️'}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br>${money(p.price)}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`).join('') || '<p>Nenhum produto ainda.</p>'}`;
+}
+async function toggleProd(id) {
+  const p = Store.data.products.find((x) => x.id === id);
+  await Store.put('products', { ...p, active: p.active === false });
+  toast(p.active === false ? 'Produto ativado' : 'Produto pausado');
 }
 let editPhoto = '';
 function editProd(id) {
@@ -198,7 +205,7 @@ function editProd(id) {
     <input id="pp" type="number" step="0.01" min="0" placeholder="Valor (R$)" value="${p.price}">
     <input id="pf" placeholder="Sabores, separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
     <label>Foto</label><input id="pimg" type="file" accept="image/*" capture="environment"><img id="prev" src="${editPhoto}" width="96" style="${editPhoto ? '' : 'display:none'};border-radius:8px;margin-bottom:10px">
-    <label><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''} style="width:auto"> Disponível no cardápio</label><br><br>
+    <label><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''} style="width:auto"> Ativo (desmarque para pausar)</label><br><br>
     <button class="btn" onclick="saveProd('${id || ''}')">Salvar</button>${id ? `<br><br><button class="btn del" onclick="delProd('${id}')">Excluir</button>` : ''}`);
   $('#pimg').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; editPhoto = await shrink(f); $('#prev').src = editPhoto; $('#prev').style.display = ''; };
 }
