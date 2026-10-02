@@ -152,10 +152,10 @@ async function checkout(method) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['prazo', 'A prazo / pendentes'], ['prod', 'Produtos'], ['cfg', 'Pix']];
+  const tabs = [['rel', 'Relatórios'], ['prazo', 'A prazo / pendentes'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><h1>🍔 Painel do Matheus</h1><button onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
-  ({ rel: tabRel, prazo: tabPrazo, prod: tabProd, cfg: tabCfg })[S.tab]();
+  ({ rel: tabRel, prazo: tabPrazo, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
 function tabRel() {
   const r = S.range, now = Date.now();
@@ -213,6 +213,13 @@ async function saveProd(id) {
 }
 async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); }
 
+function tabQr() {
+  const url = location.origin + location.pathname;
+  let img = ''; try { const q = qrcode(0, 'M'); q.addData(url); q.make(); img = q.createImgTag(10, 12); } catch (e) {}
+  $('#tab').innerHTML = `<div class="panel" style="text-align:center"><h3>QR code do cardápio</h3><div>${img}</div><p><b>${esc(url)}</b></p>
+    <p><small>Imprima e coloque na lanchonete. O cliente aponta a câmera do celular, digita o nome e faz o pedido.</small></p>
+    <button class="btn sm" onclick="window.print()">Imprimir</button></div>`;
+}
 function tabCfg() {
   const s = Store.data.settings;
   $('#tab').innerHTML = `<div class="panel"><h3>Pix para recebimento</h3><p><small>O Pix copia e cola é gerado com o valor do pedido. Informe a chave Pix da conta que vai receber (pode ser a conta da InfinitePay).</small></p>
