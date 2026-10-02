@@ -85,7 +85,7 @@ function render() {
 }
 
 function renderLogin() {
-  $('#app').innerHTML = `<div class="login"><h1>🍔 Lanchonete</h1><p>Digite seu nome para entrar</p>
+  $('#app').innerHTML = `<div class="login"><img src="logo.png" alt="L&M Lanches" class="logo"><p>Digite seu nome para entrar</p>
     <input id="nome" placeholder="Seu nome" autocomplete="off" value="">
     ${S.askPass ? '<input id="senha" type="password" placeholder="Senha do administrador">' : ''}
     <button class="btn" id="entrar">Entrar</button></div>`;
@@ -110,7 +110,7 @@ function logout() { S.user = ''; S.admin = false; S.cart = []; localStorage.remo
 function renderMenu() {
   const ps = Store.data.products.slice().sort((a, b) => a.name.localeCompare(b.name));
   const n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
-  $('#app').innerHTML = `<div class="top"><h1>🍔 Olá, ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div>
+  $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Olá, ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div>
     <div class="wrap">${ps.length ? '' : '<p>Nenhum produto cadastrado ainda.</p>'}<div class="grid">${ps.map((p) => `
       <div class="prod ${p.active === false ? 'off' : ''}" ${p.active === false ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
       <div class="i"><b>${esc(p.name)}</b><span class="pr">${p.active === false ? 'Esgotado' : money(p.price)}</span>${p.active !== false && p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}</div></div>`).join('')}</div><div class="pad"></div></div>
@@ -155,7 +155,7 @@ async function checkout(method) {
 /* --- administrador --- */
 function renderAdmin() {
   const tabs = [['rel', 'Relatórios'], ['prazo', 'A prazo / pendentes'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
-  $('#app').innerHTML = `<div class="top"><h1>🍔 Painel do Matheus</h1><button onclick="logout()">Sair</button></div><div class="wrap">
+  $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Painel do Matheus</h1><button onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
   ({ rel: tabRel, prazo: tabPrazo, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
