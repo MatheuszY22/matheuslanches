@@ -2,6 +2,8 @@
 const ADMIN_NAME = 'matheus';
 const ADMIN_HASH = 'aeefd4741ec5108880b213cef40536a41a46217b571d4857a18cf2426edcec47'; // SHA-256 da senha
 const LS = 'lanchonete-v1';
+const IP_HANDLE = 'matheus-tributino'; // InfiniteTag (InfinitePay), sem o $
+const IP_API = 'https://api.checkout.infinitepay.io';
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -132,7 +134,8 @@ function openCart() {
   modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div>${esc(i.name)}${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
     <div class="qty"><button onclick="qty(${k},-1)">−</button>${i.qty}<button onclick="qty(${k},1)">+</button></div></div>`).join('')}
     <p style="font-size:20px"><b>Total: ${money(cartTotal())}</b></p>
-    <button class="btn" onclick="checkout('pix')">Pagar agora com Pix</button><br><br>
+    <button class="btn" onclick="checkout('infinitepay')">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button><br><br>
+    <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button><br><br>
     <button class="btn sec" onclick="checkout('prazo')">Deixar anotado (pagar depois)</button>`);
 }
 function qty(k, d) { S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
@@ -142,6 +145,21 @@ async function checkout(method) {
   const paused = S.cart.filter((i) => Store.data.products.find((p) => p.id === i.productId)?.active === false);
   if (paused.length) { S.cart = S.cart.filter((i) => !paused.includes(i)); render(); closeModal(); return toast(paused.map((i) => i.name).join(', ') + ' acabou e saiu do pedido'); }
   const order = { id: uid(), customer: S.user, items: S.cart.map((i) => ({ ...i })), total: cartTotal(), status: 'pending', method, createdAt: Date.now(), paidAt: null };
+  if (method === 'infinitepay') {
+    $('#modal .box').innerHTML = '<h2>Abrindo o pagamento…</h2><p>Aguarde um instante.</p>';
+    try {
+      const r = await fetch(IP_API + '/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        handle: IP_HANDLE, order_nsu: order.id, redirect_url: location.origin + location.pathname,
+        items: order.items.map((i) => ({ quantity: i.qty, price: Math.round(i.price * 100), description: i.name + (i.flavor ? ' (' + i.flavor + ')' : '') })),
+        customer: { name: order.customer } }) });
+      const j = await r.json().catch(() => ({}));
+      order.payUrl = j.url || j.link || j.checkout_url || j.payment_url || Object.values(j).find((v) => typeof v === 'string' && v.startsWith('https://') && !v.includes('app.infinitepay.io/external')) || '';
+      if (!r.ok || !order.payUrl) throw new Error(j.message || 'sem link');
+    } catch (e) { closeModal(); return toast('Não foi possível abrir o pagamento. Tente o Pix ou pague depois.'); }
+    order.method = 'infinitepay';
+    await Store.put('orders', order); S.cart = []; localStorage.setItem('lanche-pagando', order.id);
+    location.href = order.payUrl; return;
+  }
   await Store.put('orders', order); S.cart = []; render();
   if (method === 'prazo') return modal(`<h2>Pedido anotado ✅</h2><p>Total de ${money(order.total)} anotado no nome de <b>${esc(order.customer)}</b>. Pague depois com o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>`);
   const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: order.total, txid: order.id });
@@ -179,7 +197,7 @@ function tabPrazo() {
   const pend = Store.data.orders.filter((o) => o.status !== 'paid').sort((a, b) => a.createdAt - b.createdAt);
   const by = {}; pend.forEach((o) => (by[o.customer] ||= []).push(o));
   $('#tab').innerHTML = Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row" style="border:0"><h3 style="margin:0">${esc(c)}</h3><b>${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
-    ${os.map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag">${o.method === 'pix' ? 'Pix aguardando' : 'A prazo'}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}</div>
+    ${os.map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag">${o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : 'A prazo'}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}</div>
     <div style="text-align:right"><b>${money(o.total)}</b><br><button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button></div></div>`).join('')}
     <br><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div>`).join('') : '<p>Nenhum pedido pendente 🎉</p>';
 }
@@ -237,6 +255,27 @@ function tabCfg() {
 async function saveCfg() { await Store.setSettings({ pixKey: $('#k').value.trim(), pixName: $('#n').value.trim(), pixCity: $('#c').value.trim() }); toast('Salvo'); }
 
 Store.onChange = () => { if ($('#modal').classList.contains('hidden') && !(document.activeElement && ['INPUT', 'SELECT'].includes(document.activeElement.tagName))) render(); };
+/* Volta do checkout da InfinitePay: confere o pagamento e marca o pedido como pago */
+async function handleReturn() {
+  const q = new URLSearchParams(location.search), id = q.get('order_nsu');
+  if (!id || !q.get('transaction_nsu')) return;
+  history.replaceState(null, '', location.pathname);
+  modal('<h2>Confirmando pagamento…</h2><p>Aguarde um instante.</p>');
+  try {
+    const r = await fetch(IP_API + '/payment_check', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handle: IP_HANDLE, order_nsu: id, transaction_nsu: q.get('transaction_nsu'), slug: q.get('slug') }) });
+    const j = await r.json();
+    let o = Store.data.orders.find((x) => x.id === id);
+    if (!o && Store.cloud) { const d = await Store.fs.collection('orders').doc(id).get(); o = d.exists ? d.data() : null; }
+    if (!o) throw new Error('pedido não encontrado');
+    if (j.paid && j.amount === Math.round(o.total * 100)) {
+      await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now(), paidWith: q.get('capture_method') || j.capture_method || '', receiptUrl: q.get('receipt_url') || '' });
+      localStorage.removeItem('lanche-pagando');
+      modal(`<h2>Pagamento confirmado ✅</h2><p>Pedido de <b>${money(o.total)}</b> pago. Obrigado!</p>${q.get('receipt_url') ? `<p><a href="${esc(q.get('receipt_url'))}" target="_blank" rel="noopener">Ver comprovante</a></p>` : ''}<button class="btn" onclick="closeModal()">Ok</button>`);
+    } else modal('<h2>Pagamento ainda não confirmado</h2><p>O pedido ficou anotado como pendente. Se você já pagou, avise o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>');
+  } catch (e) { modal('<h2>Não consegui confirmar agora</h2><p>O pedido ficou anotado como pendente. Se você já pagou, avise o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>'); }
+}
 Store.init();
 if (S.admin) Store.watchOrders();
 render();
+handleReturn();
