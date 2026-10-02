@@ -134,11 +134,29 @@ function openCart() {
   modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div>${esc(i.name)}${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
     <div class="qty"><button onclick="qty(${k},-1)">−</button>${i.qty}<button onclick="qty(${k},1)">+</button></div></div>`).join('')}
     <p style="font-size:20px"><b>Total: ${money(cartTotal())}</b></p>
-    <button class="btn" onclick="checkout('infinitepay')">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button><br><br>
+    <button class="btn" onclick="payOnline()">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button>${contato() ? `<p style="margin:6px 0 0"><small>Contato: ${esc(contato().phone)} · ${esc(contato().email)} <a href="#" onclick="editContato();return false">alterar</a></small></p>` : ''}<br>
     <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button><br><br>
     <button class="btn sec" onclick="checkout('prazo')">Deixar anotado (pagar depois)</button>`);
 }
 function qty(k, d) { S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
+const contatoKey = () => 'lanche-contato:' + S.user.toLowerCase();
+function contato() { try { return JSON.parse(localStorage.getItem(contatoKey())); } catch (e) { return null; } }
+const soDigitos = (v) => String(v || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+function payOnline() { contato() ? checkout('infinitepay') : editContato(true); }
+function editContato(thenPay) {
+  const c = contato() || { phone: '', email: '' };
+  modal(`<h2>Seus dados para o pagamento</h2><p><small>Preencha uma vez. O aparelho lembra, e a tela de pagamento já vem preenchida.</small></p>
+    <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD, ex.: (64) 99999-9999" value="${esc(c.phone)}">
+    <input id="cemail" type="email" placeholder="E-mail" value="${esc(c.email)}">
+    <button class="btn" onclick="saveContato(${thenPay ? 'true' : 'false'})">${thenPay ? 'Continuar para o pagamento' : 'Salvar'}</button>`);
+}
+function saveContato(thenPay) {
+  const phone = $('#cphone').value.trim(), email = $('#cemail').value.trim(), d = soDigitos(phone);
+  if (d.length < 10 || d.length > 11) return toast('Celular inválido: use DDD + número');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('E-mail inválido');
+  localStorage.setItem(contatoKey(), JSON.stringify({ phone, email }));
+  thenPay ? checkout('infinitepay') : openCart();
+}
 async function checkout(method) {
   const st = Store.data.settings;
   if (method === 'pix' && !st.pixKey) return toast('Pix ainda não configurado pelo Matheus');
@@ -151,7 +169,7 @@ async function checkout(method) {
       const r = await fetch(IP_API + '/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         handle: IP_HANDLE, order_nsu: order.id, redirect_url: location.origin + location.pathname,
         items: order.items.map((i) => ({ quantity: i.qty, price: Math.round(i.price * 100), description: i.name + (i.flavor ? ' (' + i.flavor + ')' : '') })),
-        customer: { name: order.customer } }) });
+        customer: { name: order.customer, email: contato()?.email, phone_number: '+55' + soDigitos(contato()?.phone) } }) });
       const j = await r.json().catch(() => ({}));
       order.payUrl = j.url || j.link || j.checkout_url || j.payment_url || Object.values(j).find((v) => typeof v === 'string' && v.startsWith('https://') && !v.includes('app.infinitepay.io/external')) || '';
       if (!r.ok || !order.payUrl) throw new Error(j.message || 'sem link');
