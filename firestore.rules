@@ -5,6 +5,7 @@ service cloud.firestore {
     // A senha do Matheus protege só a tela do painel.
     match /products/{id} { allow read, write: if true; }
     match /config/{id}   { allow read, write: if true; }
+    match /customers/{id} { allow read, create, update: if true; allow delete: if false; }
     match /orders/{id}   { allow read, create, update: if true; allow delete: if false; }
     match /{other=**}    { allow read, write: if false; }
   }

@@ -17,7 +17,7 @@ async function sha256(s) {
 
 /* ---------- Armazenamento: local (padrão) ou Firestore (se config.js tiver FIREBASE_CONFIG) ---------- */
 const Store = {
-  data: { products: [], orders: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
+  data: { products: [], orders: [], customers: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
   cloud: !!window.FIREBASE_CONFIG,
   fs: null, onChange: () => {}, ordersUnsub: null,
   init() {
@@ -41,6 +41,10 @@ const Store = {
     const arr = this.data[col]; const i = arr.findIndex((x) => x.id === obj.id);
     if (i >= 0) arr[i] = obj; else arr.push(obj);
     this.save(); this.onChange();
+  },
+  async getCustomer(key) {
+    if (this.cloud) { const d = await this.fs.collection('customers').doc(key).get(); return d.exists ? d.data() : null; }
+    return (this.data.customers || []).find((c) => c.id === key) || null;
   },
   async remove(col, id) {
     if (this.cloud) return this.fs.collection(col).doc(id).delete();
@@ -73,7 +77,10 @@ function pixPayload({ key, name, city, amount, txid }) {
 }
 
 /* ---------- Estado de tela ---------- */
-const S = { user: localStorage.getItem('lanche-user') || '', admin: sessionStorage.getItem('lanche-admin') === '1', tab: 'rel', range: '7', cart: [], askPass: false };
+const nameKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+const readSess = () => { try { return JSON.parse(localStorage.getItem('lanche-sess')); } catch (e) { return null; } };
+const IS_ADMIN = sessionStorage.getItem('lanche-admin') === '1';
+const S = { user: IS_ADMIN ? 'Matheus' : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null };
 
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.remove('hidden'); setTimeout(() => t.classList.add('hidden'), 2200); }
 function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="box">${html}</div>`; m.classList.remove('hidden'); m.onclick = (e) => { if (e.target === m) closeModal(); }; }
@@ -87,27 +94,69 @@ function render() {
 }
 
 function renderLogin() {
-  $('#app').innerHTML = `<div class="login"><img src="logo.png" alt="L&M Lanches" class="logo"><p>Digite seu nome para entrar</p>
-    <input id="nome" placeholder="Seu nome" autocomplete="off" value="">
+  const L = (inner) => ($('#app').innerHTML = `<div class="login"><img src="logo.png" alt="L&M Lanches" class="logo">${inner}</div>`);
+  if (S.step === 'pin') {
+    L(`<p>O nome <b>${esc(S.pending.name)}</b> já tem cadastro. Para confirmar que é você, digite os <b>4 últimos números do celular</b> cadastrado.</p>
+      <input id="pin" inputmode="numeric" maxlength="4" placeholder="Últimos 4 dígitos" autocomplete="off">
+      <button class="btn" id="entrar">Confirmar</button><br><br><button class="btn sec" id="voltar">Não sou eu, usar outro nome</button>`);
+    $('#entrar').onclick = confirmPin; $('#voltar').onclick = backToName; $('#pin').onkeydown = (e) => { if (e.key === 'Enter') confirmPin(); };
+    return $('#pin').focus();
+  }
+  if (S.step === 'cad') {
+    L(`<p>Olá, <b>${esc(S.pending.name)}</b>! Primeira vez por aqui. Cadastre seu contato uma só vez: ele fica salvo e agiliza o pagamento.</p>
+      <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD, ex.: (64) 99999-9999" autocomplete="tel">
+      <input id="cemail" type="email" placeholder="E-mail" autocomplete="email">
+      <button class="btn" id="entrar">Cadastrar e entrar</button><br><br><button class="btn sec" id="voltar">Voltar</button>`);
+    $('#entrar').onclick = registerCustomer; $('#voltar').onclick = backToName; $('#cemail').onkeydown = (e) => { if (e.key === 'Enter') registerCustomer(); };
+    return $('#cphone').focus();
+  }
+  L(`<p>Digite seu nome para entrar</p><input id="nome" placeholder="Seu nome" autocomplete="off" value="">
     ${S.askPass ? '<input id="senha" type="password" placeholder="Senha do administrador">' : ''}
-    <button class="btn" id="entrar">Entrar</button></div>`;
+    <button class="btn" id="entrar">Entrar</button>`);
   const go = async () => {
-    const nome = $('#nome').value.trim();
+    const nome = $('#nome').value.trim().replace(/\s+/g, ' ');
     if (!nome) return toast('Digite seu nome');
-    if (nome.toLowerCase() === ADMIN_NAME) {
+    const key = nameKey(nome);
+    if (key === ADMIN_NAME) {
       if (!S.askPass) { S.askPass = true; renderLogin(); $('#nome').value = nome; $('#senha').focus(); return; }
       if ((await sha256($('#senha').value)) !== ADMIN_HASH) return toast('Senha incorreta');
-      S.admin = true; sessionStorage.setItem('lanche-admin', '1'); S.user = 'Matheus'; Store.watchOrders();
-    } else S.user = nome;
-    S.askPass = false; localStorage.setItem('lanche-user', S.user); render();
+      S.admin = true; sessionStorage.setItem('lanche-admin', '1'); S.user = 'Matheus'; S.profile = null; S.askPass = false; Store.watchOrders(); return render();
+    }
+    try {
+      const c = await Store.getCustomer(key);
+      if (c && localStorage.getItem('lanche-ok:' + key)) return enterCustomer(c); // este aparelho já foi confirmado
+      S.pending = { key, name: nome }; S.step = c ? 'pin' : 'cad'; renderLogin();
+    } catch (e) { toast('Sem conexão. Tente de novo.'); }
   };
   $('#entrar').onclick = go;
   $('#app').querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => { if (e.key === 'Enter') go(); }));
-  $('#nome').oninput = () => { if (S.askPass && $('#nome').value.trim().toLowerCase() !== ADMIN_NAME) { S.askPass = false; const v = $('#nome').value; renderLogin(); $('#nome').value = v; $('#nome').focus(); } };
+  $('#nome').oninput = () => { if (S.askPass && nameKey($('#nome').value) !== ADMIN_NAME) { S.askPass = false; const v = $('#nome').value; renderLogin(); $('#nome').value = v; $('#nome').focus(); } };
   $('#nome').focus();
 }
-function logout() { S.user = ''; S.admin = false; S.cart = []; localStorage.removeItem('lanche-user'); sessionStorage.removeItem('lanche-admin'); render(); }
-
+function backToName() { S.step = 'nome'; S.pending = null; renderLogin(); }
+function enterCustomer(c) {
+  S.user = c.name; S.profile = c; S.step = 'nome'; S.pending = null;
+  localStorage.setItem('lanche-sess', JSON.stringify(c)); localStorage.setItem('lanche-ok:' + c.id, '1'); render();
+}
+async function confirmPin() {
+  try {
+    const c = await Store.getCustomer(S.pending.key);
+    if (c && (await sha256(c.id + ':' + $('#pin').value.trim())) === c.pinHash) return enterCustomer(c);
+    toast('Número não confere. Se esse nome é de outra pessoa, volte e use outro nome.');
+  } catch (e) { toast('Sem conexão. Tente de novo.'); }
+}
+async function registerCustomer() {
+  const phone = $('#cphone').value.trim(), email = $('#cemail').value.trim(), d = soDigitos(phone);
+  if (d.length < 10 || d.length > 11) return toast('Celular inválido: use DDD + número');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('E-mail inválido');
+  try {
+    const { key, name } = S.pending;
+    if (await Store.getCustomer(key)) { toast('Esse nome acabou de ser cadastrado por outra pessoa.'); S.step = 'pin'; return renderLogin(); }
+    const c = { id: key, name, phone, email, pinHash: await sha256(key + ':' + d.slice(-4)), createdAt: Date.now() };
+    await Store.put('customers', c); enterCustomer(c);
+  } catch (e) { toast('Não foi possível cadastrar. Tente de novo.'); }
+}
+function logout() { S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
 /* --- cliente --- */
 function renderMenu() {
   const ps = Store.data.products.slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -139,23 +188,24 @@ function openCart() {
     <button class="btn sec" onclick="checkout('prazo')">Deixar anotado (pagar depois)</button>`);
 }
 function qty(k, d) { S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
-const contatoKey = () => 'lanche-contato:' + S.user.toLowerCase();
-function contato() { try { return JSON.parse(localStorage.getItem(contatoKey())); } catch (e) { return null; } }
 const soDigitos = (v) => String(v || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
-function payOnline() { contato() ? checkout('infinitepay') : editContato(true); }
-function editContato(thenPay) {
+const contato = () => (S.profile ? { phone: S.profile.phone, email: S.profile.email } : null);
+function payOnline() { checkout('infinitepay'); }
+function editContato() {
   const c = contato() || { phone: '', email: '' };
-  modal(`<h2>Seus dados para o pagamento</h2><p><small>Preencha uma vez. O aparelho lembra, e a tela de pagamento já vem preenchida.</small></p>
-    <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD, ex.: (64) 99999-9999" value="${esc(c.phone)}">
+  modal(`<h2>Meu contato</h2><p><small>Esses dados vão preenchidos na tela de pagamento. Se trocar o celular, os 4 últimos dígitos novos passam a ser o seu código de acesso.</small></p>
+    <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD" value="${esc(c.phone)}">
     <input id="cemail" type="email" placeholder="E-mail" value="${esc(c.email)}">
-    <button class="btn" onclick="saveContato(${thenPay ? 'true' : 'false'})">${thenPay ? 'Continuar para o pagamento' : 'Salvar'}</button>`);
+    <button class="btn" onclick="saveContato()">Salvar</button>`);
 }
-function saveContato(thenPay) {
+async function saveContato() {
   const phone = $('#cphone').value.trim(), email = $('#cemail').value.trim(), d = soDigitos(phone);
   if (d.length < 10 || d.length > 11) return toast('Celular inválido: use DDD + número');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('E-mail inválido');
-  localStorage.setItem(contatoKey(), JSON.stringify({ phone, email }));
-  thenPay ? checkout('infinitepay') : openCart();
+  try {
+    const c = { ...S.profile, phone, email, pinHash: await sha256(S.profile.id + ':' + d.slice(-4)) };
+    await Store.put('customers', c); S.profile = c; localStorage.setItem('lanche-sess', JSON.stringify(c)); openCart();
+  } catch (e) { toast('Não foi possível salvar. Tente de novo.'); }
 }
 async function checkout(method) {
   const st = Store.data.settings;
