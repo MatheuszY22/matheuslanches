@@ -318,8 +318,8 @@ function tabRel() {
   const prods = {}; os.forEach((o) => o.items.forEach((i) => { const p = prods[i.name] ||= { q: 0, v: 0 }; p.q += i.qty; p.v += i.qty * i.price; }));
   const top = Object.entries(prods).sort((a, b) => b[1].q - a[1].q), max = top[0]?.[1].q || 1;
   $('#tab').innerHTML = `<select onchange="S.range=this.value;render()">${[['1', 'Hoje'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['all', 'Tudo']].map(([v, t]) => `<option value="${v}" ${r === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-    <div class="cards"><div class="stat"><span>Total vendido</span><b>${money(sum(os))}</b></div><div class="stat"><span>Recebido</span><b style="color:var(--ok)">${money(sum(paid))}</b></div>
-    <div class="stat"><span>A receber</span><b style="color:var(--warn)">${money(sum(pend))}</b></div><div class="stat"><span>Pedidos</span><b>${os.length}</b></div></div>
+    <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Total vendido</span><b>${money(sum(os))}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b style="color:var(--ok)">${money(sum(paid))}</b></div>
+    <div class="stat click" onclick="detail('areceber')"><span>A receber</span><b style="color:var(--warn)">${money(sum(pend))}</b></div><div class="stat click" onclick="detail('pedidos')"><span>Pedidos</span><b>${os.length}</b></div></div>
     <div class="panel"><h3>Vendas por dia</h3><table><tr><th>Dia</th><th class="n">Pedidos</th><th class="n">Recebido</th><th class="n">A receber</th><th class="n">Total</th></tr>
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${d.n}</td><td class="n">${money(d.paid)}</td><td class="n">${money(d.pend)}</td><td class="n"><b>${money(d.paid + d.pend)}</b></td></tr>`).join('') || '<tr><td colspan=5>Sem vendas no período</td></tr>'}</table></div>
     <div class="panel"><h3>Produtos mais vendidos</h3>${top.map(([n, p]) => `<div style="margin-bottom:10px"><div class="row" style="border:0;padding:0"><span>${esc(n)}</span><span>${p.q} un · ${money(p.v)}</span></div><div class="bar"><i style="width:${(p.q / max) * 100}%"></i></div></div>`).join('') || 'Sem dados'}</div>`;
@@ -431,7 +431,7 @@ function tabCmp() {
   const total = cs.reduce((a, c) => a + Number(c.value), 0), cat = {};
   cs.forEach((c) => (cat[c.category] = (cat[c.category] || 0) + Number(c.value)));
   $('#tab').innerHTML = `${rangeSelect()}<button class="btn" onclick="editCompra()">+ Lançar compra</button><br><br>
-    <div class="cards"><div class="stat"><span>Total gasto</span><b>${money(total)}</b></div>${Object.entries(cat).map(([k, v]) => `<div class="stat"><span>${esc(k)}</span><b style="font-size:18px">${money(v)}</b></div>`).join('')}</div>
+    <div class="cards"><div class="stat click" onclick="detail('compras')"><span>Total gasto</span><b>${money(total)}</b></div>${Object.entries(cat).map(([k, v]) => `<div class="stat click" onclick="detail('compras','${k}')"><span>${esc(k)}</span><b style="font-size:18px">${money(v)}</b></div>`).join('')}</div>
     <div class="panel"><h3>Compras</h3><table><tr><th>Data</th><th>Descrição</th><th class="n">Valor</th><th></th></tr>
     ${cs.map((c) => `<tr><td>${dayLabel(c.date)}</td><td>${esc(c.description)}<br><small>${esc(c.category)}${c.supplier ? ' · ' + esc(c.supplier) : ''}</small></td><td class="n">${money(c.value)}</td><td class="n"><button class="btn sec sm" onclick="editCompra('${c.id}')">Editar</button></td></tr>`).join('') || '<tr><td colspan=4>Nenhuma compra no período</td></tr>'}</table></div>`;
 }
@@ -474,15 +474,53 @@ function tabRes() {
   $('#tab').innerHTML = `${rangeSelect()}
     <div class="panel"><b>${vendas || compras ? (caixa >= 0 ? 'No período entrou mais dinheiro do que saiu.' : 'No período saiu mais dinheiro do que entrou.') : 'Sem movimento no período.'}</b>
     <br><small>Caixa = o que já recebeu − o que gastou em compras. Se você comprou muito insumo que ainda não virou venda, o caixa fica baixo mesmo com lucro.</small></div>
-    <div class="cards"><div class="stat"><span>Vendido</span><b>${money(vendas)}</b></div><div class="stat"><span>Recebido</span><b>${money(recebido)}</b></div><div class="stat"><span>A receber</span><b style="color:var(--warn)">${money(areceber)}</b></div>
-    <div class="stat"><span>Gasto em compras</span><b>${money(compras)}</b></div><div class="stat"><span>Caixa (recebido − compras)</span><b style="color:${cor(caixa)}">${money(caixa)}</b></div>
-    <div class="stat"><span>Lucro estimado</span><b style="color:${cor(lucro)}">${money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : pct.toFixed(0) + '% de margem'}</span></div>
-    <div class="stat"><span>Perdas (a custo)</span><b>${money(perdas)}</b></div><div class="stat"><span>Estoque guardado (a custo)</span><b>${money(parado)}</b></div></div>
+    <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Vendido</span><b>${money(vendas)}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b>${money(recebido)}</b></div><div class="stat click" onclick="detail('areceber')"><span>A receber</span><b style="color:var(--warn)">${money(areceber)}</b></div>
+    <div class="stat click" onclick="detail('compras')"><span>Gasto em compras</span><b>${money(compras)}</b></div><div class="stat click" onclick="detail('caixa')"><span>Caixa (recebido − compras)</span><b style="color:${cor(caixa)}">${money(caixa)}</b></div>
+    <div class="stat click" onclick="detail('lucro')"><span>Lucro estimado</span><b style="color:${cor(lucro)}">${money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : pct.toFixed(0) + '% de margem'}</span></div>
+    <div class="stat click" onclick="detail('perdas')"><span>Perdas (a custo)</span><b>${money(perdas)}</b></div><div class="stat click" onclick="detail('parado')"><span>Estoque guardado (a custo)</span><b>${money(parado)}</b></div></div>
     ${semCusto ? '<div class="panel"><small>Para ver o lucro certo, informe o <b>custo unitário</b> (quanto custa fazer 1 unidade) em Produtos → Editar.</small></div>' : ''}
     <div class="panel"><h3>Lucro por produto</h3><table><tr><th>Produto</th><th class="n">Qtd</th><th class="n">Vendido</th><th class="n">Lucro</th><th class="n">Margem</th></tr>
     ${Object.entries(byProd).sort((a, b) => b[1].rev - a[1].rev).map(([n, r]) => `<tr><td>${esc(n)}</td><td class="n">${r.q}</td><td class="n">${money(r.rev)}</td><td class="n">${r.cost ? money(r.rev - r.cost) : '—'}</td><td class="n">${r.cost ? ((1 - r.cost / r.rev) * 100).toFixed(0) + '%' : '—'}</td></tr>`).join('') || '<tr><td colspan=5>Sem vendas</td></tr>'}</table></div>
     <div class="panel"><h3>Dia a dia</h3><table><tr><th>Dia</th><th class="n">Vendas</th><th class="n">Compras</th><th class="n">Saldo</th></tr>
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n" style="color:${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
+}
+/* Detalhe dos cartões: abre os registros que formam cada valor, no período escolhido */
+const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + (o.paidWith === 'pix' ? ' (Pix)' : o.paidWith === 'credit_card' ? ' (cartão)' : '') : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : 'A prazo');
+const itemsText = (o) => o.items.map((i) => i.qty + '× ' + esc(i.name) + (i.flavor ? ' (' + esc(i.flavor) + ')' : '')).join(', ');
+const ordRows = (os) => os.slice().sort((a, b) => b.createdAt - a.createdAt).map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · <b>${esc(o.customer)}</b> · <span class="tag">${ordLabel(o)}</span></small><br>${itemsText(o)}</div><b>${money(o.total)}</b></div>`).join('') || '<p>Nenhum registro no período.</p>';
+const cmpRows = (cs) => cs.slice().sort((a, b) => b.date.localeCompare(a.date)).map((c) => `<div class="row"><div><small>${dayLabel(c.date)} · ${esc(c.category)}${c.supplier ? ' · ' + esc(c.supplier) : ''}</small><br>${esc(c.description)}</div><b>${money(c.value)}</b></div>`).join('') || '<p>Nenhuma compra no período.</p>';
+function detail(kind, cat) {
+  const from = rangeFrom(), fromD = dayKey(from), per = { 1: 'hoje', 7: 'últimos 7 dias', 30: 'últimos 30 dias', all: 'todo o período' }[S.range];
+  const os = Store.data.orders.filter((o) => o.createdAt >= from && o.status !== 'cancelled'), sum = (a) => a.reduce((x, o) => x + o.total, 0);
+  const allC = Store.data.purchases.filter((c) => c.date >= fromD), cps = allC.filter((c) => !cat || c.category === cat);
+  const tot = (cs) => cs.reduce((a, c) => a + Number(c.value), 0);
+  const costOf = (i) => i.cost || Store.data.products.find((p) => p.id === i.productId)?.cost || 0;
+  const head = (t, v, sub) => `<h2>${t}</h2><p><small>${per}${sub ? ' · ' + sub : ''}</small></p><p style="font-size:22px;margin:0 0 8px"><b>${v}</b></p>`;
+  const paid = os.filter((o) => o.status === 'paid'), pend = os.filter((o) => o.status !== 'paid');
+  let h = '';
+  if (kind === 'vendido') h = head('Total vendido', money(sum(os)), os.length + ' pedido(s)') + ordRows(os);
+  else if (kind === 'pedidos') h = head('Pedidos', os.length, money(sum(os))) + ordRows(os);
+  else if (kind === 'recebido') h = head('Recebido', money(sum(paid)), paid.length + ' pedido(s) pago(s)') + ordRows(paid);
+  else if (kind === 'areceber') h = head('A receber', money(sum(pend)), pend.length + ' pedido(s) em aberto') + ordRows(pend);
+  else if (kind === 'compras') h = head('Gasto em compras' + (cat ? ' · ' + esc(cat) : ''), money(tot(cps)), cps.length + ' compra(s)') + cmpRows(cps);
+  else if (kind === 'caixa') h = head('Caixa', money(sum(paid) - tot(allC)), 'recebido − compras') + '<h3>Entrou (' + money(sum(paid)) + ')</h3>' + ordRows(paid) + '<h3>Saiu (' + money(tot(allC)) + ')</h3>' + cmpRows(allC);
+  else if (kind === 'lucro') {
+    const by = {}; let cmv = 0;
+    os.forEach((o) => o.items.forEach((i) => { const r = (by[i.name] ||= { q: 0, rev: 0, cost: 0 }); r.q += i.qty; r.rev += i.qty * i.price; r.cost += i.qty * costOf(i); cmv += i.qty * costOf(i); }));
+    h = head('Lucro estimado', money(sum(os) - cmv), 'vendido ' + money(sum(os)) + ' − custo dos produtos ' + money(cmv)) +
+      '<table><tr><th>Produto</th><th class="n">Qtd</th><th class="n">Vendido</th><th class="n">Custo</th><th class="n">Lucro</th></tr>' +
+      Object.entries(by).sort((a, b) => b[1].rev - a[1].rev).map(([n, r]) => `<tr><td>${esc(n)}</td><td class="n">${r.q}</td><td class="n">${money(r.rev)}</td><td class="n">${r.cost ? money(r.cost) : '—'}</td><td class="n">${r.cost ? money(r.rev - r.cost) : '—'}</td></tr>`).join('') + '</table>';
+  } else if (kind === 'perdas') {
+    const ls = Store.data.stockLog.filter((l) => l.type === 'perda' && l.date >= fromD).sort((a, b) => b.createdAt - a.createdAt);
+    const val = (l) => Math.abs(l.qty) * (Store.data.products.find((p) => p.id === l.productId)?.cost || 0);
+    h = head('Perdas (a custo)', money(ls.reduce((a, l) => a + val(l), 0)), ls.length + ' lançamento(s)') +
+      (ls.map((l) => `<div class="row"><div><small>${dayLabel(l.date)}${l.note ? ' · ' + esc(l.note) : ''}</small><br>${Math.abs(l.qty)}× ${itemName(l.productName, l.flavor)}</div><b>${money(val(l))}</b></div>`).join('') || '<p>Nenhuma perda no período.</p>');
+  } else if (kind === 'parado') {
+    const its = stockItems();
+    h = head('Estoque guardado (a custo)', money(its.reduce((a, it) => a + it.qty * (it.p.cost || 0), 0)), 'agora') +
+      (its.map((it) => `<div class="row"><div>${itemName(it.p.name, it.flavor)}<br><small>${it.qty} un × ${it.p.cost ? money(it.p.cost) : 'sem custo'}</small></div><b>${money(it.qty * (it.p.cost || 0))}</b></div>`).join('') || '<p>Nenhum item com estoque controlado.</p>');
+  }
+  modal(h + '<br><button class="btn sec" onclick="closeModal()">Fechar</button>');
 }
 async function cancelOrd(id) {
   const o = Store.data.orders.find((x) => x.id === id);

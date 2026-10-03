@@ -53,3 +53,5 @@ td.n,th.n{text-align:right}
 .btn.ok,.btn.del{color:#fff}.btn.sec:hover{background:#fff6d6}
 .stat b,.panel h3{color:#111}
 td.low,.low{color:#c92a2a;font-weight:700}td.warn{color:var(--warn)}
+.stat.click{cursor:pointer;transition:transform .1s,box-shadow .1s}.stat.click:hover{box-shadow:0 0 0 2px var(--pri)}.stat.click:active{transform:scale(.98)}
+.stat.click::after{content:"ver detalhes ›";display:block;font-size:11px;color:var(--mut);margin-top:2px}
