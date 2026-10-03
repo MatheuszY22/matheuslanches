@@ -6,6 +6,9 @@ service cloud.firestore {
     match /products/{id} { allow read, write: if true; }
     match /config/{id}   { allow read, write: if true; }
     match /customers/{id} { allow read, create, update: if true; allow delete: if false; }
+    match /stock/{id}     { allow read, write: if true; }
+    match /purchases/{id} { allow read, write: if true; }
+    match /stockLog/{id}  { allow read, write: if true; }
     match /orders/{id}   { allow read, create, update: if true; allow delete: if false; }
     match /{other=**}    { allow read, write: if false; }
   }

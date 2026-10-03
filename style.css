@@ -52,3 +52,4 @@ td.n,th.n{text-align:right}
 .login{background:#111;color:#fff;padding-top:8px}.login p{color:#ddd}.login .logo{width:100%;max-width:300px;border-radius:50%;display:block;margin:0 auto 8px}
 .btn.ok,.btn.del{color:#fff}.btn.sec:hover{background:#fff6d6}
 .stat b,.panel h3{color:#111}
+td.low,.low{color:#c92a2a;font-weight:700}td.warn{color:var(--warn)}

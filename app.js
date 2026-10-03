@@ -15,9 +15,19 @@ async function sha256(s) {
   return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
+/* ---------- Estoque (por produto e sabor; só controla produtos com "Controlar estoque") ---------- */
+const stockId = (pid, flavor) => pid + '__' + (flavor ? String(flavor).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-') : '_');
+const isTracked = (p) => !!p && p.track === true;
+const stockQty = (pid, flavor) => Store.data.stock.find((s) => s.id === stockId(pid, flavor))?.qty || 0;
+const available = (p, flavor) => (isTracked(p) ? stockQty(p.id, flavor) : Infinity);
+const availableTotal = (p) => (!isTracked(p) ? Infinity : p.flavors?.length ? p.flavors.reduce((a, f) => a + stockQty(p.id, f), 0) : stockQty(p.id, ''));
+const inCart = (pid, flavor) => S.cart.filter((i) => i.productId === pid && i.flavor === flavor).reduce((a, i) => a + i.qty, 0);
+const stockItems = () => Store.data.products.filter(isTracked).sort((a, b) => a.name.localeCompare(b.name))
+  .flatMap((p) => (p.flavors?.length ? p.flavors : ['']).map((f) => ({ p, flavor: f, id: stockId(p.id, f), qty: stockQty(p.id, f) })));
+
 /* ---------- Armazenamento: local (padrão) ou Firestore (se config.js tiver FIREBASE_CONFIG) ---------- */
 const Store = {
-  data: { products: [], orders: [], customers: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
+  data: { products: [], orders: [], customers: [], stock: [], purchases: [], stockLog: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
   cloud: !!window.FIREBASE_CONFIG,
   fs: null, onChange: () => {}, ordersUnsub: null,
   init() {
@@ -25,6 +35,7 @@ const Store = {
       firebase.initializeApp(window.FIREBASE_CONFIG);
       this.fs = firebase.firestore();
       this.fs.collection('products').onSnapshot((s) => { this.data.products = s.docs.map((d) => d.data()); this.onChange(); });
+      this.fs.collection('stock').onSnapshot((s) => { this.data.stock = s.docs.map((d) => d.data()); this.onChange(); });
       this.fs.doc('config/main').onSnapshot((d) => { if (d.exists) this.data.settings = { ...this.data.settings, ...d.data() }; this.onChange(); });
     } else {
       try { Object.assign(this.data, JSON.parse(localStorage.getItem(LS) || '{}')); } catch (e) {}
@@ -33,7 +44,47 @@ const Store = {
   },
   watchOrders() { // só o administrador assina os pedidos
     if (!this.cloud || this.ordersUnsub) return;
-    this.ordersUnsub = this.fs.collection('orders').onSnapshot((s) => { this.data.orders = s.docs.map((d) => d.data()); this.onChange(); });
+    this.ordersUnsub = ['orders', 'purchases', 'stockLog'].map((col) =>
+      this.fs.collection(col).onSnapshot((s) => { this.data[col] = s.docs.map((d) => d.data()); this.onChange(); }));
+  },
+  /* Mexe no estoque e grava outros documentos (pedido, histórico) de uma vez só.
+     deltas: [{ id, productId, flavor, name, delta }]; falha inteira se algum item ficar negativo. */
+  async applyStock(deltas, writes = []) {
+    const falta = (d, cur) => new Error('ESTOQUE:' + d.name + (d.flavor ? ' (' + d.flavor + ')' : '') + ': ' + (cur > 0 ? 'só restam ' + cur : 'acabou'));
+    if (this.cloud) {
+      return this.fs.runTransaction(async (tx) => {
+        const refs = deltas.map((d) => this.fs.collection('stock').doc(d.id));
+        const snaps = await Promise.all(refs.map((r) => tx.get(r)));
+        const next = deltas.map((d, i) => { const cur = snaps[i].exists ? snaps[i].data().qty : 0; if (cur + d.delta < 0) throw falta(d, cur); return cur + d.delta; });
+        deltas.forEach((d, i) => tx.set(refs[i], { id: d.id, productId: d.productId, flavor: d.flavor || '', qty: next[i] }));
+        writes.forEach((w) => tx.set(this.fs.collection(w.col).doc(w.obj.id), w.obj));
+      });
+    }
+    const next = deltas.map((d) => { const cur = this.data.stock.find((s) => s.id === d.id)?.qty || 0; if (cur + d.delta < 0) throw falta(d, cur); return cur + d.delta; });
+    deltas.forEach((d, i) => {
+      const row = { id: d.id, productId: d.productId, flavor: d.flavor || '', qty: next[i] }, k = this.data.stock.findIndex((s) => s.id === d.id);
+      if (k >= 0) this.data.stock[k] = row; else this.data.stock.push(row);
+    });
+    writes.forEach((w) => { const arr = this.data[w.col], k = arr.findIndex((x) => x.id === w.obj.id); if (k >= 0) arr[k] = w.obj; else arr.push(w.obj); });
+    this.save(); this.onChange();
+  },
+  placeOrder(order) {
+    const need = {};
+    order.items.forEach((i) => {
+      if (!isTracked(Store.data.products.find((p) => p.id === i.productId))) return;
+      const id = stockId(i.productId, i.flavor);
+      (need[id] ||= { id, productId: i.productId, flavor: i.flavor, name: i.name, delta: 0 }).delta -= i.qty;
+    });
+    return this.applyStock(Object.values(need), [{ col: 'orders', obj: order }]);
+  },
+  cancelOrder(o) {
+    const back = {};
+    o.items.forEach((i) => {
+      if (!isTracked(Store.data.products.find((p) => p.id === i.productId))) return;
+      const id = stockId(i.productId, i.flavor);
+      (back[id] ||= { id, productId: i.productId, flavor: i.flavor, name: i.name, delta: 0 }).delta += i.qty;
+    });
+    return this.applyStock(Object.values(back), [{ col: 'orders', obj: { ...o, status: 'cancelled', cancelledAt: Date.now() } }]);
   },
   save() { if (!this.cloud) localStorage.setItem(LS, JSON.stringify(this.data)); },
   async put(col, obj) {
@@ -158,24 +209,27 @@ async function registerCustomer() {
 }
 function logout() { S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
 /* --- cliente --- */
+const out = (p) => p.active === false || availableTotal(p) <= 0;
 function renderMenu() {
   const ps = Store.data.products.slice().sort((a, b) => a.name.localeCompare(b.name));
   const n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
   $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Olá, ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div>
     <div class="wrap">${ps.length ? '' : '<p>Nenhum produto cadastrado ainda.</p>'}<div class="grid">${ps.map((p) => `
-      <div class="prod ${p.active === false ? 'off' : ''}" ${p.active === false ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
-      <div class="i"><b>${esc(p.name)}</b><span class="pr">${p.active === false ? 'Esgotado' : money(p.price)}</span>${p.active !== false && p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}</div></div>`).join('')}</div><div class="pad"></div></div>
+      <div class="prod ${out(p) ? 'off' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
+      <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}${!out(p) && availableTotal(p) <= 5 ? `<br><small class="low">Restam ${availableTotal(p)}</small>` : ''}</div></div>`).join('')}</div><div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>🛒 ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
 }
 const cartTotal = () => S.cart.reduce((a, i) => a + i.price * i.qty, 0);
 function pick(id) {
   const p = Store.data.products.find((x) => x.id === id);
   if (!p.flavors?.length) return addCart(p, '');
-  modal(`<h2>${esc(p.name)}</h2><p>Escolha o sabor:</p><div class="chips">${p.flavors.map((f, i) => `<button class="chip" onclick="addCart(Store.data.products.find(x=>x.id==='${id}'),'${esc(f).replace(/'/g, '')}')">${esc(f)}</button>`).join('')}</div>`);
+  modal(`<h2>${esc(p.name)}</h2><p>Escolha o sabor:</p><div class="chips">${p.flavors.map((f, i) => { const a = available(p, f) - inCart(p.id, f); return `<button class="chip" ${a <= 0 ? 'disabled' : `onclick="pickFlavor('${id}',${i})"`}>${esc(f)}${a <= 0 ? ' · esgotado' : a <= 5 ? ` · restam ${a}` : ''}</button>`; }).join('')}</div>`);
 }
+function pickFlavor(id, i) { const p = Store.data.products.find((x) => x.id === id); addCart(p, p.flavors[i]); }
 function addCart(p, flavor) {
+  if (available(p, flavor) - inCart(p.id, flavor) < 1) { closeModal(); render(); return toast('Acabou! Não temos mais disponível.'); }
   const l = S.cart.find((i) => i.productId === p.id && i.flavor === flavor);
-  if (l) l.qty++; else S.cart.push({ productId: p.id, name: p.name, flavor, price: p.price, qty: 1 });
+  if (l) l.qty++; else S.cart.push({ productId: p.id, name: p.name, flavor, price: p.price, cost: p.cost || 0, qty: 1 });
   closeModal(); toast('Adicionado'); render();
 }
 function openCart() {
@@ -187,7 +241,10 @@ function openCart() {
     <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button><br><br>
     <button class="btn sec" onclick="checkout('prazo')">Deixar anotado (pagar depois)</button>`);
 }
-function qty(k, d) { S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
+function qty(k, d) {
+  const l = S.cart[k], p = Store.data.products.find((x) => x.id === l.productId);
+  if (d > 0 && available(p, l.flavor) - inCart(l.productId, l.flavor) < 1) { toast('Só temos ' + available(p, l.flavor) + ' disponível'); return; }
+  S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
 const soDigitos = (v) => String(v || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
 const contato = () => (S.profile ? { phone: S.profile.phone, email: S.profile.email } : null);
 function payOnline() { checkout('infinitepay'); }
@@ -207,6 +264,10 @@ async function saveContato() {
     await Store.put('customers', c); S.profile = c; localStorage.setItem('lanche-sess', JSON.stringify(c)); openCart();
   } catch (e) { toast('Não foi possível salvar. Tente de novo.'); }
 }
+function stockFail(e) {
+  closeModal(); render();
+  toast(String(e.message).startsWith('ESTOQUE:') ? e.message.slice(8) + '. Ajuste o pedido.' : 'Não foi possível enviar o pedido. Tente de novo.');
+}
 async function checkout(method) {
   const st = Store.data.settings;
   if (method === 'pix' && !st.pixKey) return toast('Pix ainda não configurado pelo Matheus');
@@ -225,10 +286,12 @@ async function checkout(method) {
       if (!r.ok || !order.payUrl) throw new Error(j.message || 'sem link');
     } catch (e) { closeModal(); return toast('Não foi possível abrir o pagamento. Tente o Pix ou pague depois.'); }
     order.method = 'infinitepay';
-    await Store.put('orders', order); S.cart = []; localStorage.setItem('lanche-pagando', order.id);
+    try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
+    S.cart = []; localStorage.setItem('lanche-pagando', order.id);
     location.href = order.payUrl; return;
   }
-  await Store.put('orders', order); S.cart = []; render();
+  try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
+  S.cart = []; render();
   if (method === 'prazo') return modal(`<h2>Pedido anotado ✅</h2><p>Total de ${money(order.total)} anotado no nome de <b>${esc(order.customer)}</b>. Pague depois com o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>`);
   const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: order.total, txid: order.id });
   let qr = ''; try { const q = qrcode(0, 'M'); q.addData(code); q.make(); qr = q.createImgTag(5, 8); } catch (e) {}
@@ -240,15 +303,15 @@ async function checkout(method) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['prazo', 'A prazo / pendentes'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
+  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['prazo', 'A prazo / pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Painel do Matheus</h1><button onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
-  ({ rel: tabRel, prazo: tabPrazo, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
+  ({ rel: tabRel, res: tabRes, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
 function tabRel() {
   const r = S.range, now = Date.now();
   const from = r === 'all' ? 0 : r === '1' ? new Date().setHours(0, 0, 0, 0) : now - Number(r) * 86400000;
-  const os = Store.data.orders.filter((o) => o.createdAt >= from);
+  const os = Store.data.orders.filter((o) => o.createdAt >= from && o.status !== 'cancelled');
   const paid = os.filter((o) => o.status === 'paid'), pend = os.filter((o) => o.status !== 'paid');
   const sum = (a) => a.reduce((x, o) => x + o.total, 0);
   const byDay = {}; os.forEach((o) => { const d = byDay[dayKey(o.createdAt)] ||= { n: 0, paid: 0, pend: 0 }; d.n++; o.status === 'paid' ? (d.paid += o.total) : (d.pend += o.total); });
@@ -262,19 +325,19 @@ function tabRel() {
     <div class="panel"><h3>Produtos mais vendidos</h3>${top.map(([n, p]) => `<div style="margin-bottom:10px"><div class="row" style="border:0;padding:0"><span>${esc(n)}</span><span>${p.q} un · ${money(p.v)}</span></div><div class="bar"><i style="width:${(p.q / max) * 100}%"></i></div></div>`).join('') || 'Sem dados'}</div>`;
 }
 function tabPrazo() {
-  const pend = Store.data.orders.filter((o) => o.status !== 'paid').sort((a, b) => a.createdAt - b.createdAt);
+  const pend = Store.data.orders.filter((o) => o.status !== 'paid' && o.status !== 'cancelled').sort((a, b) => a.createdAt - b.createdAt);
   const by = {}; pend.forEach((o) => (by[o.customer] ||= []).push(o));
   $('#tab').innerHTML = Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row" style="border:0"><h3 style="margin:0">${esc(c)}</h3><b>${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
     ${os.map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag">${o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : 'A prazo'}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}</div>
-    <div style="text-align:right"><b>${money(o.total)}</b><br><button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button></div></div>`).join('')}
+    <div style="text-align:right"><b>${money(o.total)}</b><br><button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button> <button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button></div></div>`).join('')}
     <br><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div>`).join('') : '<p>Nenhum pedido pendente 🎉</p>';
 }
 async function markPaid(id) { const o = Store.data.orders.find((x) => x.id === id); await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now() }); toast('Marcado como pago'); }
-async function payAll(c) { if (!confirm(`Marcar tudo de ${c} como pago?`)) return; for (const o of Store.data.orders.filter((x) => x.customer === c && x.status !== 'paid')) await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now() }); }
+async function payAll(c) { if (!confirm(`Marcar tudo de ${c} como pago?`)) return; for (const o of Store.data.orders.filter((x) => x.customer === c && x.status !== 'paid' && x.status !== 'cancelled')) await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now() }); }
 
 function tabProd() {
   $('#tab').innerHTML = `<button class="btn" onclick="editProd()">+ Novo produto</button><br><br>${Store.data.products.map((p) => `<div class="panel row" style="border:0">
-    <div style="display:flex;gap:10px;align-items:center">${p.photo ? `<img src="${p.photo}" width="56" height="56" style="object-fit:cover;border-radius:8px">` : '🍽️'}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br>${money(p.price)}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
+    <div style="display:flex;gap:10px;align-items:center">${p.photo ? `<img src="${p.photo}" width="56" height="56" style="object-fit:cover;border-radius:8px">` : '🍽️'}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br>${money(p.price)}${isTracked(p) ? ` · estoque ${availableTotal(p)}` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
     <div style="display:flex;flex-direction:column;gap:6px"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`).join('') || '<p>Nenhum produto ainda.</p>'}`;
 }
 async function toggleProd(id) {
@@ -284,13 +347,15 @@ async function toggleProd(id) {
 }
 let editPhoto = '';
 function editProd(id) {
-  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', flavors: [], photo: '', active: true };
+  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true };
   editPhoto = p.photo || '';
   modal(`<h2>${id ? 'Editar' : 'Novo'} produto</h2>
     <input id="pn" placeholder="Nome (ex.: X-Burguer)" value="${esc(p.name)}">
     <input id="pp" type="number" step="0.01" min="0" placeholder="Valor (R$)" value="${p.price}">
+    <input id="pc" type="number" step="0.01" min="0" placeholder="Custo unitário (R$): quanto custa fazer 1" value="${p.cost || ''}">
     <input id="pf" placeholder="Sabores, separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
     <label>Foto</label><input id="pimg" type="file" accept="image/*" capture="environment"><img id="prev" src="${editPhoto}" width="96" style="${editPhoto ? '' : 'display:none'};border-radius:8px;margin-bottom:10px">
+    <label><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''} style="width:auto"> Controlar estoque (só vende o que foi lançado como produção)</label><br>
     <label><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''} style="width:auto"> Ativo (desmarque para pausar)</label><br><br>
     <button class="btn" onclick="saveProd('${id || ''}')">Salvar</button>${id ? `<br><br><button class="btn del" onclick="delProd('${id}')">Excluir</button>` : ''}`);
   $('#pimg').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; editPhoto = await shrink(f); $('#prev').src = editPhoto; $('#prev').style.display = ''; };
@@ -301,10 +366,129 @@ function shrink(file, max = 480) {
 async function saveProd(id) {
   const name = $('#pn').value.trim(), price = parseFloat($('#pp').value);
   if (!name || isNaN(price)) return toast('Informe nome e valor');
-  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked });
+  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, track: $('#pt').checked });
   closeModal(); render(); toast('Produto salvo');
 }
 async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); render(); }
+
+/* --- gestão: estoque, compras e resultado --- */
+const rangeFrom = () => (S.range === 'all' ? 0 : S.range === '1' ? new Date().setHours(0, 0, 0, 0) : Date.now() - Number(S.range) * 86400000);
+const rangeSelect = () => `<select onchange="S.range=this.value;render()">${[['1', 'Hoje'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['all', 'Tudo']].map(([v, t]) => `<option value="${v}" ${S.range === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+const today = () => dayKey(Date.now());
+const itemName = (name, flavor) => esc(name) + (flavor ? ` <small>(${esc(flavor)})</small>` : '');
+const LOG_TIPO = { producao: 'Produção', perda: 'Perda', contagem: 'Contagem' };
+const logEntry = (it, type, qty, date, note) => ({ id: uid(), date, productId: it.p.id, productName: it.p.name, flavor: it.flavor, type, qty, note: note || '', createdAt: Date.now() });
+const stockMsg = (e) => String(e.message).replace('ESTOQUE:', '');
+
+function tabEst() {
+  const items = stockItems(), log = Store.data.stockLog.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
+  $('#tab').innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="flex:1" onclick="prodDia()">+ Lançar produção do dia</button><button class="btn sec" style="flex:1" onclick="adjStock()">Perda / contagem</button></div><br>
+    ${items.length ? `<div class="panel"><h3>Estoque atual</h3><table><tr><th>Item</th><th class="n">Qtd</th><th class="n">Custo un.</th><th class="n">Valor</th></tr>
+    ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n ${it.qty <= 0 ? 'low' : it.qty <= 5 ? 'warn' : ''}"><b>${it.qty}</b></td><td class="n">${it.p.cost ? money(it.p.cost) : '—'}</td><td class="n">${it.p.cost ? money(it.qty * it.p.cost) : '—'}</td></tr>`).join('')}</table></div>`
+      : '<p>Nenhum produto com estoque controlado. Em <b>Produtos → Editar</b>, marque "Controlar estoque".</p>'}
+    <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
+    ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
+}
+function prodDia() {
+  const items = stockItems();
+  if (!items.length) return toast('Marque "Controlar estoque" nos produtos primeiro');
+  modal(`<h2>Produção do dia</h2><input id="pdate" type="date" value="${today()}"><p><small>Digite quanto foi produzido de cada item. Deixe em branco o que não produziu.</small></p>
+    ${items.map((it, i) => `<div class="row"><span>${itemName(it.p.name, it.flavor)}<br><small>no estoque: ${it.qty}</small></span><input class="pq" data-i="${i}" type="number" min="0" step="1" inputmode="numeric" placeholder="0" style="width:90px;margin:0"></div>`).join('')}
+    <br><button class="btn" onclick="saveProdDia()">Salvar produção</button>`);
+}
+async function saveProdDia() {
+  const items = stockItems(), date = $('#pdate').value || today();
+  const es = [...document.querySelectorAll('.pq')].map((el) => ({ it: items[Number(el.dataset.i)], q: Math.floor(Number(el.value)) })).filter((x) => x.q > 0);
+  if (!es.length) return toast('Digite ao menos uma quantidade');
+  try {
+    await Store.applyStock(es.map(({ it, q }) => ({ id: it.id, productId: it.p.id, flavor: it.flavor, name: it.p.name, delta: q })), es.map(({ it, q }) => ({ col: 'stockLog', obj: logEntry(it, 'producao', q, date) })));
+  } catch (e) { return toast(stockMsg(e)); }
+  closeModal(); render(); toast('Produção lançada');
+}
+function adjStock() {
+  const items = stockItems();
+  if (!items.length) return toast('Marque "Controlar estoque" nos produtos primeiro');
+  modal(`<h2>Perda ou contagem</h2>
+    <select id="asel">${items.map((it, i) => `<option value="${i}">${esc(it.p.name)}${it.flavor ? ' (' + esc(it.flavor) + ')' : ''} — estoque ${it.qty}</option>`).join('')}</select>
+    <select id="amode"><option value="perda">Perda / desperdício (tira do estoque)</option><option value="contagem">Contagem (informo quanto tem agora)</option></select>
+    <input id="aqty" type="number" min="0" step="1" inputmode="numeric" placeholder="Quantidade">
+    <input id="anote" placeholder="Observação (opcional)"><button class="btn" onclick="saveAdj()">Salvar</button>`);
+}
+async function saveAdj() {
+  const it = stockItems()[Number($('#asel').value)], mode = $('#amode').value, q = Math.floor(Number($('#aqty').value));
+  if (!(q >= 0) || $('#aqty').value === '' || (mode === 'perda' && q === 0)) return toast('Informe uma quantidade válida');
+  const delta = mode === 'perda' ? -q : q - it.qty;
+  if (delta === 0) return toast('O estoque já está com esse valor');
+  try {
+    await Store.applyStock([{ id: it.id, productId: it.p.id, flavor: it.flavor, name: it.p.name, delta }], [{ col: 'stockLog', obj: logEntry(it, mode, delta, today(), $('#anote').value.trim()) }]);
+  } catch (e) { return toast(stockMsg(e)); }
+  closeModal(); render(); toast('Estoque atualizado');
+}
+
+const CATS = ['Ingredientes', 'Embalagens', 'Gás e energia', 'Equipamentos', 'Outros'];
+function tabCmp() {
+  const fromD = dayKey(rangeFrom()), cs = Store.data.purchases.filter((c) => c.date >= fromD).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+  const total = cs.reduce((a, c) => a + Number(c.value), 0), cat = {};
+  cs.forEach((c) => (cat[c.category] = (cat[c.category] || 0) + Number(c.value)));
+  $('#tab').innerHTML = `${rangeSelect()}<button class="btn" onclick="editCompra()">+ Lançar compra</button><br><br>
+    <div class="cards"><div class="stat"><span>Total gasto</span><b>${money(total)}</b></div>${Object.entries(cat).map(([k, v]) => `<div class="stat"><span>${esc(k)}</span><b style="font-size:18px">${money(v)}</b></div>`).join('')}</div>
+    <div class="panel"><h3>Compras</h3><table><tr><th>Data</th><th>Descrição</th><th class="n">Valor</th><th></th></tr>
+    ${cs.map((c) => `<tr><td>${dayLabel(c.date)}</td><td>${esc(c.description)}<br><small>${esc(c.category)}${c.supplier ? ' · ' + esc(c.supplier) : ''}</small></td><td class="n">${money(c.value)}</td><td class="n"><button class="btn sec sm" onclick="editCompra('${c.id}')">Editar</button></td></tr>`).join('') || '<tr><td colspan=4>Nenhuma compra no período</td></tr>'}</table></div>`;
+}
+function editCompra(id) {
+  const c = Store.data.purchases.find((x) => x.id === id) || { date: today(), description: '', category: CATS[0], supplier: '', value: '' };
+  modal(`<h2>${id ? 'Editar' : 'Lançar'} compra</h2><input id="cdate" type="date" value="${c.date}">
+    <input id="cdesc" placeholder="O que comprou (ex.: 10 kg de frango)" value="${esc(c.description)}">
+    <select id="ccat">${CATS.map((k) => `<option ${k === c.category ? 'selected' : ''}>${k}</option>`).join('')}</select>
+    <input id="csup" placeholder="Fornecedor / mercado (opcional)" value="${esc(c.supplier)}">
+    <input id="cval" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Valor total gasto (R$)" value="${c.value}">
+    <button class="btn" onclick="saveCompra('${id || ''}')">Salvar</button>${id ? `<br><br><button class="btn del" onclick="delCompra('${id}')">Excluir</button>` : ''}`);
+}
+async function saveCompra(id) {
+  const description = $('#cdesc').value.trim(), value = parseFloat($('#cval').value), date = $('#cdate').value;
+  if (!description || !(value > 0) || !date) return toast('Informe data, descrição e valor');
+  const old = Store.data.purchases.find((x) => x.id === id);
+  await Store.put('purchases', { id: id || uid(), date, description, category: $('#ccat').value, supplier: $('#csup').value.trim(), value, createdAt: old?.createdAt || Date.now() });
+  closeModal(); render(); toast('Compra salva');
+}
+async function delCompra(id) { if (!confirm('Excluir esta compra?')) return; await Store.remove('purchases', id); closeModal(); render(); }
+
+function tabRes() {
+  const from = rangeFrom(), fromD = dayKey(from);
+  const os = Store.data.orders.filter((o) => o.createdAt >= from && o.status !== 'cancelled'), sum = (a) => a.reduce((x, o) => x + o.total, 0);
+  const vendas = sum(os), recebido = sum(os.filter((o) => o.status === 'paid')), areceber = vendas - recebido;
+  const cps = Store.data.purchases.filter((c) => c.date >= fromD), compras = cps.reduce((a, c) => a + Number(c.value), 0);
+  const byProd = {}, byDay = {}; let cmv = 0, semCusto = false;
+  os.forEach((o) => {
+    (byDay[dayKey(o.createdAt)] ||= { v: 0, c: 0 }).v += o.total;
+    o.items.forEach((i) => {
+      const cost = i.cost || Store.data.products.find((p) => p.id === i.productId)?.cost || 0; if (!cost) semCusto = true;
+      const r = (byProd[i.name] ||= { q: 0, rev: 0, cost: 0 }); r.q += i.qty; r.rev += i.qty * i.price; r.cost += i.qty * cost; cmv += i.qty * cost;
+    });
+  });
+  cps.forEach((c) => ((byDay[c.date] ||= { v: 0, c: 0 }).c += Number(c.value)));
+  const perdas = Store.data.stockLog.filter((l) => l.type === 'perda' && l.date >= fromD).reduce((a, l) => a + Math.abs(l.qty) * (Store.data.products.find((p) => p.id === l.productId)?.cost || 0), 0);
+  const parado = stockItems().reduce((a, it) => a + it.qty * (it.p.cost || 0), 0);
+  const lucro = vendas - cmv, caixa = recebido - compras, pct = vendas ? (lucro / vendas) * 100 : 0;
+  const cor = (v) => (v >= 0 ? 'var(--ok)' : '#c92a2a');
+  $('#tab').innerHTML = `${rangeSelect()}
+    <div class="panel"><b>${vendas || compras ? (caixa >= 0 ? 'No período entrou mais dinheiro do que saiu.' : 'No período saiu mais dinheiro do que entrou.') : 'Sem movimento no período.'}</b>
+    <br><small>Caixa = o que já recebeu − o que gastou em compras. Se você comprou muito insumo que ainda não virou venda, o caixa fica baixo mesmo com lucro.</small></div>
+    <div class="cards"><div class="stat"><span>Vendido</span><b>${money(vendas)}</b></div><div class="stat"><span>Recebido</span><b>${money(recebido)}</b></div><div class="stat"><span>A receber</span><b style="color:var(--warn)">${money(areceber)}</b></div>
+    <div class="stat"><span>Gasto em compras</span><b>${money(compras)}</b></div><div class="stat"><span>Caixa (recebido − compras)</span><b style="color:${cor(caixa)}">${money(caixa)}</b></div>
+    <div class="stat"><span>Lucro estimado</span><b style="color:${cor(lucro)}">${money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : pct.toFixed(0) + '% de margem'}</span></div>
+    <div class="stat"><span>Perdas (a custo)</span><b>${money(perdas)}</b></div><div class="stat"><span>Estoque guardado (a custo)</span><b>${money(parado)}</b></div></div>
+    ${semCusto ? '<div class="panel"><small>Para ver o lucro certo, informe o <b>custo unitário</b> (quanto custa fazer 1 unidade) em Produtos → Editar.</small></div>' : ''}
+    <div class="panel"><h3>Lucro por produto</h3><table><tr><th>Produto</th><th class="n">Qtd</th><th class="n">Vendido</th><th class="n">Lucro</th><th class="n">Margem</th></tr>
+    ${Object.entries(byProd).sort((a, b) => b[1].rev - a[1].rev).map(([n, r]) => `<tr><td>${esc(n)}</td><td class="n">${r.q}</td><td class="n">${money(r.rev)}</td><td class="n">${r.cost ? money(r.rev - r.cost) : '—'}</td><td class="n">${r.cost ? ((1 - r.cost / r.rev) * 100).toFixed(0) + '%' : '—'}</td></tr>`).join('') || '<tr><td colspan=5>Sem vendas</td></tr>'}</table></div>
+    <div class="panel"><h3>Dia a dia</h3><table><tr><th>Dia</th><th class="n">Vendas</th><th class="n">Compras</th><th class="n">Saldo</th></tr>
+    ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n" style="color:${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
+}
+async function cancelOrd(id) {
+  const o = Store.data.orders.find((x) => x.id === id);
+  if (!confirm('Cancelar este pedido? As unidades voltam para o estoque.')) return;
+  try { await Store.cancelOrder(o); toast('Pedido cancelado'); } catch (e) { toast(stockMsg(e)); }
+}
 
 function tabQr() {
   const url = location.origin + location.pathname;
@@ -336,6 +520,7 @@ async function handleReturn() {
     let o = Store.data.orders.find((x) => x.id === id);
     if (!o && Store.cloud) { const d = await Store.fs.collection('orders').doc(id).get(); o = d.exists ? d.data() : null; }
     if (!o) throw new Error('pedido não encontrado');
+    if (o.status === 'cancelled') { modal('<h2>Pedido cancelado</h2><p>Esse pedido foi cancelado pelo Matheus. Se você pagou, fale com ele para resolver.</p><button class="btn" onclick="closeModal()">Ok</button>'); return; }
     if (j.paid && j.amount === Math.round(o.total * 100)) {
       await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now(), paidWith: q.get('capture_method') || j.capture_method || '', receiptUrl: q.get('receipt_url') || '' });
       localStorage.removeItem('lanche-pagando');
