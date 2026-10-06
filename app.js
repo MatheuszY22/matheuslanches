@@ -58,18 +58,22 @@ const Store = {
   },
   /* Mexe no estoque e grava outros documentos (pedido, histórico) de uma vez só.
      deltas: [{ id, productId, flavor, name, delta }]; falha inteira se algum item ficar negativo. */
-  async applyStock(deltas, writes = []) {
+  async applyStock(deltas, writes = [], guard, strict = true) {
     const falta = (d, cur) => new Error('ESTOQUE:' + d.name + (d.flavor ? ' (' + d.flavor + ')' : '') + ': ' + (cur > 0 ? 'só restam ' + cur : 'acabou'));
+    // guard: só aplica se o pedido ainda estiver num destes status (evita devolver o estoque duas vezes)
+    const mudou = (g) => !g || !guard.status.includes(g.status);
     if (this.cloud) {
       return this.fs.runTransaction(async (tx) => {
         const refs = deltas.map((d) => this.fs.collection('stock').doc(d.id));
-        const snaps = await Promise.all(refs.map((r) => tx.get(r)));
-        const next = deltas.map((d, i) => { const cur = snaps[i].exists ? snaps[i].data().qty : 0; if (cur + d.delta < 0) throw falta(d, cur); return cur + d.delta; });
+        const [gsnap, ...snaps] = await Promise.all([guard ? tx.get(this.fs.collection(guard.col).doc(guard.id)) : null, ...refs.map((r) => tx.get(r))]);
+        if (guard && mudou(gsnap.exists ? gsnap.data() : null)) throw new Error('MUDOU');
+        const next = deltas.map((d, i) => { const cur = snaps[i].exists ? snaps[i].data().qty : 0; if (strict && cur + d.delta < 0) throw falta(d, cur); return cur + d.delta; });
         deltas.forEach((d, i) => tx.set(refs[i], { id: d.id, productId: d.productId, flavor: d.flavor || '', qty: next[i] }));
         writes.forEach((w) => tx.set(this.fs.collection(w.col).doc(w.obj.id), w.obj));
       });
     }
-    const next = deltas.map((d) => { const cur = this.data.stock.find((s) => s.id === d.id)?.qty || 0; if (cur + d.delta < 0) throw falta(d, cur); return cur + d.delta; });
+    if (guard && mudou(this.data[guard.col].find((x) => x.id === guard.id))) throw new Error('MUDOU');
+    const next = deltas.map((d) => { const cur = this.data.stock.find((s) => s.id === d.id)?.qty || 0; if (strict && cur + d.delta < 0) throw falta(d, cur); return cur + d.delta; });
     deltas.forEach((d, i) => {
       const row = { id: d.id, productId: d.productId, flavor: d.flavor || '', qty: next[i] }, k = this.data.stock.findIndex((s) => s.id === d.id);
       if (k >= 0) this.data.stock[k] = row; else this.data.stock.push(row);
@@ -77,23 +81,20 @@ const Store = {
     writes.forEach((w) => { const arr = this.data[w.col], k = arr.findIndex((x) => x.id === w.obj.id); if (k >= 0) arr[k] = w.obj; else arr.push(w.obj); });
     this.save(); this.onChange();
   },
-  placeOrder(order) {
-    const need = {};
-    order.items.forEach((i) => {
-      if (!isTracked(Store.data.products.find((p) => p.id === i.productId))) return;
-      const id = stockId(i.productId, i.flavor);
-      (need[id] ||= { id, productId: i.productId, flavor: i.flavor, name: i.name, delta: 0 }).delta -= i.qty;
-    });
-    return this.applyStock(Object.values(need), [{ col: 'orders', obj: order }]);
-  },
-  cancelOrder(o) {
-    const back = {};
+  // linhas de estoque de um pedido (só produtos com estoque controlado); sinal -1 baixa, +1 devolve
+  stockLines(o, sinal) {
+    const m = {};
     o.items.forEach((i) => {
       if (!isTracked(Store.data.products.find((p) => p.id === i.productId))) return;
       const id = stockId(i.productId, i.flavor);
-      (back[id] ||= { id, productId: i.productId, flavor: i.flavor, name: i.name, delta: 0 }).delta += i.qty;
+      (m[id] ||= { id, productId: i.productId, flavor: i.flavor, name: i.name, delta: 0 }).delta += sinal * i.qty;
     });
-    return this.applyStock(Object.values(back), [{ col: 'orders', obj: { ...o, status: 'cancelled', cancelledAt: Date.now() } }]);
+    return Object.values(m);
+  },
+  placeOrder(order) { return this.applyStock(this.stockLines(order, -1), [{ col: 'orders', obj: order }], null, false); }, // venda nunca é barrada: o saldo pode ficar negativo
+  // devolve o estoque e cancela, mas só se o pedido ainda estiver em aberto (lança 'MUDOU' se outro já mexeu)
+  cancelOrder(o, reason) {
+    return this.applyStock(this.stockLines(o, 1), [{ col: 'orders', obj: { ...o, status: 'cancelled', cancelledAt: Date.now(), cancelReason: reason || '' } }], { col: 'orders', id: o.id, status: ['pending'] });
   },
   save() { if (!this.cloud) localStorage.setItem(LS, JSON.stringify(this.data)); },
   async put(col, obj) {
@@ -231,11 +232,11 @@ function groupCats(ps) {
 const allCats = () => [...new Set(CATP.concat(Store.data.products.map(catOf)))];
 function irCat(id) { const el = document.getElementById(id); if (el) window.scrollTo({ top: el.offsetTop - 132, behavior: 'smooth' }); }
 /* --- cliente --- */
-const out = (p) => p.active === false || availableTotal(p) <= 0;
+const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
 function renderMenu() {
   const grupos = groupCats(Store.data.products), n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
   const card = (p) => `<div class="prod ${out(p) ? 'off' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
-      <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}${!out(p) && availableTotal(p) <= 5 ? `<small class="low">Restam ${availableTotal(p)}</small>` : ''}
+      <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
     ${grupos.length > 1 ? `<div class="cats">${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
@@ -247,11 +248,10 @@ const cartTotal = () => S.cart.reduce((a, i) => a + i.price * i.qty, 0);
 function pick(id) {
   const p = Store.data.products.find((x) => x.id === id);
   if (!p.flavors?.length) return addCart(p, '');
-  modal(`<h2>${esc(p.name)}</h2><p class="lead">Escolha o sabor:</p><div class="chips">${p.flavors.map((f, i) => { const a = available(p, f) - inCart(p.id, f); return `<button class="chip" ${a <= 0 ? 'disabled' : `onclick="pickFlavor('${id}',${i})"`}>${esc(f)}${a <= 0 ? ' · esgotado' : a <= 5 ? ` · restam ${a}` : ''}</button>`; }).join('')}</div>`);
+  modal(`<h2>${esc(p.name)}</h2><p class="lead">Escolha o sabor:</p><div class="chips">${p.flavors.map((f, i) => `<button class="chip" onclick="pickFlavor('${id}',${i})">${esc(f)}</button>`).join('')}</div>`);
 }
 function pickFlavor(id, i) { const p = Store.data.products.find((x) => x.id === id); addCart(p, p.flavors[i]); }
 function addCart(p, flavor) {
-  if (available(p, flavor) - inCart(p.id, flavor) < 1) { closeModal(); render(); return toast('Acabou! Não temos mais disponível.'); }
   const l = S.cart.find((i) => i.productId === p.id && i.flavor === flavor);
   if (l) l.qty++; else S.cart.push({ productId: p.id, name: p.name, flavor, price: p.price, cost: p.cost || 0, qty: 1 });
   closeModal(); toast('Adicionado'); render();
@@ -266,8 +266,6 @@ function openCart() {
     <button class="btn sec" onclick="checkout('maquininha')">Pagar no cartão físico (maquininha)</button></div>`);
 }
 function qty(k, d) {
-  const l = S.cart[k], p = Store.data.products.find((x) => x.id === l.productId);
-  if (d > 0 && available(p, l.flavor) - inCart(l.productId, l.flavor) < 1) { toast('Só temos ' + available(p, l.flavor) + ' disponível'); return; }
   S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
 const soDigitos = (v) => String(v || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
 const contato = () => (S.profile ? { phone: S.profile.phone, email: S.profile.email } : null);
@@ -475,7 +473,7 @@ function tabEst() {
   $('#tab').innerHTML = `<div class="toolbar"><button class="btn" onclick="prodDia()">+ Lançar produção do dia</button><button class="btn sec" onclick="adjStock()">Perda / contagem</button></div>
     ${items.length ? projecao(items) : ''}
     ${items.length ? `<div class="panel"><h3>Estoque atual</h3><table><tr><th>Item</th><th class="n">Qtd</th><th class="n">Custo un.</th><th class="n">Valor</th></tr>
-    ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n ${it.qty <= 0 ? 'low' : it.qty <= 5 ? 'warn' : ''}"><b>${it.qty}</b></td><td class="n">${it.p.cost ? money(it.p.cost) : '—'}</td><td class="n">${it.p.cost ? money(it.qty * it.p.cost) : '—'}</td></tr>`).join('')}</table></div>`
+    ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n ${it.qty <= 0 ? 'low' : it.qty <= 5 ? 'warn' : ''}"><b>${it.qty}</b>${it.qty < 0 ? `<br><small>faltou ${-it.qty}</small>` : ''}</td><td class="n">${it.p.cost ? money(it.p.cost) : '—'}</td><td class="n">${it.p.cost ? money(Math.max(0, it.qty) * it.p.cost) : '—'}</td></tr>`).join('')}</table></div>`
       : '<div class="panel"><p class="lead" style="margin:0">Nenhum produto com estoque controlado. Em <b>Produtos → Editar</b>, marque "Controlar estoque".</p></div>'}
     <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
     ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
@@ -542,6 +540,7 @@ async function saveVenda() {
 
 /* Projeção do dia: o que já vendeu hoje + o que o estoque atual renderia se vendesse tudo */
 function projecao(items) {
+  items = items.map((it) => ({ ...it, qty: Math.max(0, it.qty) })); // saldo negativo (vendeu além do lançado) não conta como estoque
   const h0 = new Date().setHours(0, 0, 0, 0), os = Store.data.orders.filter((o) => o.createdAt >= h0 && o.status !== 'cancelled');
   const recHoje = os.reduce((a, o) => a + o.total, 0);
   const custoHoje = os.reduce((a, o) => a + o.items.reduce((b, i) => b + i.qty * (i.cost || Store.data.products.find((p) => p.id === i.productId)?.cost || 0), 0), 0);
@@ -635,7 +634,7 @@ function tabRes() {
   });
   cps.forEach((c) => ((byDay[c.date] ||= { v: 0, c: 0 }).c += Number(c.value)));
   const perdas = Store.data.stockLog.filter((l) => l.type === 'perda' && l.date >= fromD).reduce((a, l) => a + Math.abs(l.qty) * (Store.data.products.find((p) => p.id === l.productId)?.cost || 0), 0);
-  const parado = stockItems().reduce((a, it) => a + it.qty * (it.p.cost || 0), 0);
+  const parado = stockItems().reduce((a, it) => a + Math.max(0, it.qty) * (it.p.cost || 0), 0);
   const lucro = vendas - cmv, caixa = recebido - compras, pct = vendas ? (lucro / vendas) * 100 : 0;
   const cor = (v) => (v >= 0 ? 'c-ok' : 'c-bad');
   $('#tab').innerHTML = `<div class="toolbar">${rangeSelect()}</div>
@@ -691,7 +690,7 @@ function detail(kind, cat) {
       (ls.map((l) => `<div class="row"><div><small>${dayLabel(l.date)}${l.note ? ' · ' + esc(l.note) : ''}</small><br>${Math.abs(l.qty)}× ${itemName(l.productName, l.flavor)}</div><b>${money(val(l))}</b></div>`).join('') || '<p>Nenhuma perda no período.</p>');
   } else if (kind === 'parado') {
     const its = stockItems();
-    h = head('Estoque guardado (a custo)', money(its.reduce((a, it) => a + it.qty * (it.p.cost || 0), 0)), 'agora') +
+    h = head('Estoque guardado (a custo)', money(its.reduce((a, it) => a + Math.max(0, it.qty) * (it.p.cost || 0), 0)), 'agora') +
       (its.map((it) => `<div class="row"><div>${itemName(it.p.name, it.flavor)}<br><small>${it.qty} un × ${it.p.cost ? money(it.p.cost) : 'sem custo'}</small></div><b>${money(it.qty * (it.p.cost || 0))}</b></div>`).join('') || '<p>Nenhum item com estoque controlado.</p>');
   }
   modal(h + '<div class="stack"><button class="btn sec" onclick="closeModal()">Fechar</button></div>');
@@ -699,7 +698,7 @@ function detail(kind, cat) {
 async function cancelOrd(id) {
   const o = Store.data.orders.find((x) => x.id === id);
   if (!confirm('Cancelar este pedido? As unidades voltam para o estoque.')) return;
-  try { await Store.cancelOrder(o); toast('Pedido cancelado'); } catch (e) { toast(stockMsg(e)); }
+  try { await Store.cancelOrder(o); toast('Pedido cancelado'); } catch (e) { toast(e.message === 'MUDOU' ? 'Esse pedido já foi alterado. Atualize a tela.' : stockMsg(e)); }
 }
 
 function tabQr() {
