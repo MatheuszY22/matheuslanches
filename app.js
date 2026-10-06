@@ -387,11 +387,28 @@ const stockMsg = (e) => String(e.message).replace('ESTOQUE:', '');
 function tabEst() {
   const items = stockItems(), log = Store.data.stockLog.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
   $('#tab').innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="flex:1" onclick="prodDia()">+ Lançar produção do dia</button><button class="btn sec" style="flex:1" onclick="adjStock()">Perda / contagem</button></div><br>
+    ${items.length ? projecao(items) : ''}
     ${items.length ? `<div class="panel"><h3>Estoque atual</h3><table><tr><th>Item</th><th class="n">Qtd</th><th class="n">Custo un.</th><th class="n">Valor</th></tr>
     ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n ${it.qty <= 0 ? 'low' : it.qty <= 5 ? 'warn' : ''}"><b>${it.qty}</b></td><td class="n">${it.p.cost ? money(it.p.cost) : '—'}</td><td class="n">${it.p.cost ? money(it.qty * it.p.cost) : '—'}</td></tr>`).join('')}</table></div>`
       : '<p>Nenhum produto com estoque controlado. Em <b>Produtos → Editar</b>, marque "Controlar estoque".</p>'}
     <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
     ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
+}
+/* Projeção do dia: o que já vendeu hoje + o que o estoque atual renderia se vendesse tudo */
+function projecao(items) {
+  const h0 = new Date().setHours(0, 0, 0, 0), os = Store.data.orders.filter((o) => o.createdAt >= h0 && o.status !== 'cancelled');
+  const recHoje = os.reduce((a, o) => a + o.total, 0);
+  const custoHoje = os.reduce((a, o) => a + o.items.reduce((b, i) => b + i.qty * (i.cost || Store.data.products.find((p) => p.id === i.productId)?.cost || 0), 0), 0);
+  const recPot = items.reduce((a, it) => a + it.qty * it.p.price, 0), custoPot = items.reduce((a, it) => a + it.qty * (it.p.cost || 0), 0);
+  const total = recHoje + recPot, lucro = total - (custoHoje + custoPot), semCusto = items.some((it) => !it.p.cost);
+  return `<div class="panel"><h3>Projeção do dia: se vender tudo</h3>
+    <div class="cards"><div class="stat"><span>Já vendido hoje</span><b>${money(recHoje)}</b></div><div class="stat"><span>Estoque a preço de venda</span><b>${money(recPot)}</b></div>
+    <div class="stat"><span>Faturamento possível do dia</span><b style="color:var(--ok)">${money(total)}</b></div>
+    <div class="stat"><span>Lucro bruto estimado</span><b>${semCusto ? '—' : money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : total ? ((lucro / total) * 100).toFixed(0) + '% de margem' : ''}</span></div></div>
+    <table><tr><th>Item</th><th class="n">Qtd</th><th class="n">Preço</th><th class="n">Rende</th><th class="n">Lucro</th></tr>
+    ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n">${it.qty}</td><td class="n">${money(it.p.price)}</td><td class="n">${money(it.qty * it.p.price)}</td><td class="n">${it.p.cost ? money(it.qty * (it.p.price - it.p.cost)) : '—'}</td></tr>`).join('')}
+    <tr><td><b>Total do estoque</b></td><td class="n"><b>${items.reduce((a, it) => a + it.qty, 0)}</b></td><td></td><td class="n"><b>${money(recPot)}</b></td><td class="n"><b>${semCusto ? '—' : money(recPot - custoPot)}</b></td></tr></table>
+    <p><small>Considera o estoque de agora vendido por inteiro ao preço do cardápio, mais o que já foi vendido hoje. O lucro usa o custo unitário de cada produto.</small></p></div>`;
 }
 function prodDia() {
   const items = stockItems();
