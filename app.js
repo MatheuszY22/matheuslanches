@@ -243,7 +243,7 @@ function openCart() {
     <p style="font-size:20px"><b>Total: ${money(cartTotal())}</b></p>
     <button class="btn" onclick="payOnline()">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button>${contato() ? `<p style="margin:6px 0 0"><small>Contato: ${esc(contato().phone)} · ${esc(contato().email)} <a href="#" onclick="editContato();return false">alterar</a></small></p>` : ''}<br>
     <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button><br><br>
-    <button class="btn sec" onclick="checkout('prazo')">Deixar anotado (pagar depois)</button>`);
+    <button class="btn sec" onclick="checkout('maquininha')">Pagar no cartão físico (maquininha)</button>`);
 }
 function qty(k, d) {
   const l = S.cart[k], p = Store.data.products.find((x) => x.id === l.productId);
@@ -296,7 +296,7 @@ async function checkout(method) {
   }
   try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
   S.cart = []; render();
-  if (method === 'prazo') return modal(`<h2>Pedido anotado ✅</h2><p>Total de ${money(order.total)} anotado no nome de <b>${esc(order.customer)}</b>. Pague depois com o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>`);
+  if (method === 'maquininha') return modal(`<h2>Pedido registrado ✅</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`);
   const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: order.total, txid: order.id });
   let qr = ''; try { const q = qrcode(0, 'M'); q.addData(code); q.make(); qr = q.createImgTag(5, 8); } catch (e) {}
   modal(`<h2>Pague com Pix</h2><p>Total: <b>${money(order.total)}</b></p><div style="text-align:center">${qr}</div>
@@ -307,7 +307,7 @@ async function checkout(method) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['prazo', 'A prazo / pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
+  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['prazo', 'Pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Gestão · ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
   ({ rel: tabRel, res: tabRes, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
@@ -332,7 +332,7 @@ function tabPrazo() {
   const pend = Store.data.orders.filter((o) => o.status !== 'paid' && o.status !== 'cancelled').sort((a, b) => a.createdAt - b.createdAt);
   const by = {}; pend.forEach((o) => (by[o.customer] ||= []).push(o));
   $('#tab').innerHTML = Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row" style="border:0"><h3 style="margin:0">${esc(c)}</h3><b>${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
-    ${os.map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag">${o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : 'A prazo'}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}</div>
+    ${os.map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag">${ordLabel(o)}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}</div>
     <div style="text-align:right"><b>${money(o.total)}</b><br><button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button> <button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button></div></div>`).join('')}
     <br><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div>`).join('') : '<p>Nenhum pedido pendente 🎉</p>';
 }
@@ -506,7 +506,7 @@ function tabRes() {
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n" style="color:${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
 }
 /* Detalhe dos cartões: abre os registros que formam cada valor, no período escolhido */
-const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + (o.paidWith === 'pix' ? ' (Pix)' : o.paidWith === 'credit_card' ? ' (cartão)' : '') : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : 'A prazo');
+const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + (o.paidWith === 'pix' ? ' (Pix)' : o.paidWith === 'credit_card' ? ' (cartão)' : '') : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : o.method === 'maquininha' ? 'Cartão físico (maquininha)' : 'A prazo');
 const itemsText = (o) => o.items.map((i) => i.qty + '× ' + esc(i.name) + (i.flavor ? ' (' + esc(i.flavor) + ')' : '')).join(', ');
 const ordRows = (os) => os.slice().sort((a, b) => b.createdAt - a.createdAt).map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · <b>${esc(o.customer)}</b> · <span class="tag">${ordLabel(o)}</span></small><br>${itemsText(o)}</div><b>${money(o.total)}</b></div>`).join('') || '<p>Nenhum registro no período.</p>';
 const cmpRows = (cs) => cs.slice().sort((a, b) => b.date.localeCompare(a.date)).map((c) => `<div class="row"><div><small>${dayLabel(c.date)} · ${esc(c.category)}${c.supplier ? ' · ' + esc(c.supplier) : ''}</small><br>${esc(c.description)}</div><b>${money(c.value)}</b></div>`).join('') || '<p>Nenhuma compra no período.</p>';
