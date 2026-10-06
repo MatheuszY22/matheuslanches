@@ -355,10 +355,10 @@ async function clientePagou(id) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['prazo', 'Pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
+  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Gestão · ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
-  ({ rel: tabRel, res: tabRes, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
+  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
 function tabRel() {
   const r = S.range, now = Date.now();
@@ -452,6 +452,37 @@ function tabEst() {
     <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
     ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
 }
+/* Venda por fora: lança no sistema o que foi vendido sem passar pelo cardápio (balcão, WhatsApp...) e baixa o estoque */
+const vendaItems = () => Store.data.products.filter((p) => p.active !== false).sort((a, b) => a.name.localeCompare(b.name))
+  .flatMap((p) => (p.flavors?.length ? p.flavors : ['']).map((f) => ({ p, flavor: f })));
+function tabVenda() {
+  const its = vendaItems();
+  $('#tab').innerHTML = its.length ? `<div class="panel"><h3>Lançar venda feita por fora</h3>
+    <p><small>Digite a quantidade vendida de cada item. O estoque é baixado e a venda entra nos relatórios.</small></p>
+    ${its.map((it, i) => `<div class="row"><span>${itemName(it.p.name, it.flavor)}<br><small>${money(it.p.price)}${isTracked(it.p) ? ' · estoque ' + stockQty(it.p.id, it.flavor) : ''}</small></span>
+      <input class="vq" data-i="${i}" type="number" min="0" step="1" inputmode="numeric" placeholder="0" oninput="vTotal()" style="width:90px;margin:0"></div>`).join('')}
+    <p style="font-size:20px"><b>Total: <span id="vtot">${money(0)}</span></b></p>
+    <input id="vcli" placeholder="Nome do cliente (opcional)">
+    <select id="vpay"><option value="dinheiro">Recebido em dinheiro</option><option value="pix">Recebido por Pix</option><option value="cartao">Recebido no cartão</option><option value="receber">Ainda não recebi (fica em Pendentes)</option></select>
+    <input id="vdate" type="date" value="${today()}">
+    <button class="btn" onclick="saveVenda()">Registrar venda</button></div>` : '<p>Cadastre produtos primeiro.</p>';
+}
+function vTotal() {
+  const its = vendaItems();
+  $('#vtot').textContent = money([...document.querySelectorAll('.vq')].reduce((a, el) => a + Math.floor(Number(el.value) || 0) * its[Number(el.dataset.i)].p.price, 0));
+}
+async function saveVenda() {
+  const its = vendaItems(), es = [...document.querySelectorAll('.vq')].map((el) => ({ it: its[Number(el.dataset.i)], q: Math.floor(Number(el.value)) })).filter((x) => x.q > 0);
+  if (!es.length) return toast('Digite ao menos uma quantidade');
+  const pay = $('#vpay').value, date = $('#vdate').value || today(), now = Date.now();
+  const when = date === today() ? now : new Date(date + 'T12:00:00').getTime();
+  const items = es.map(({ it, q }) => ({ productId: it.p.id, name: it.p.name, flavor: it.flavor, price: it.p.price, cost: it.p.cost || 0, qty: q }));
+  const order = { id: uid(), customer: $('#vcli').value.trim() || 'Balcão', items, total: items.reduce((a, i) => a + i.price * i.qty, 0), status: pay === 'receber' ? 'pending' : 'paid',
+    method: 'balcao', paidWith: pay === 'receber' ? '' : pay, createdAt: when, paidAt: pay === 'receber' ? null : when };
+  try { await Store.placeOrder(order); } catch (e) { return toast(stockMsg(e) + '. Se faltou lançar produção, faça em Estoque.'); }
+  toast('Venda registrada: ' + money(order.total)); render();
+}
+
 /* Projeção do dia: o que já vendeu hoje + o que o estoque atual renderia se vendesse tudo */
 function projecao(items) {
   const h0 = new Date().setHours(0, 0, 0, 0), os = Store.data.orders.filter((o) => o.createdAt >= h0 && o.status !== 'cancelled');
@@ -564,7 +595,7 @@ function tabRes() {
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n" style="color:${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
 }
 /* Detalhe dos cartões: abre os registros que formam cada valor, no período escolhido */
-const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + ({ pix: ' (Pix)', credit_card: ' (cartão)', maquininha: ' (maquininha)' }[o.paidWith] || '') : aConferir(o) ? 'Pix informado · conferir' : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : o.method === 'maquininha' ? 'Cartão físico (maquininha)' : 'A prazo');
+const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + (o.method === 'balcao' ? ' · balcão' : '') + ({ pix: ' (Pix)', credit_card: ' (cartão)', maquininha: ' (maquininha)', cartao: ' (cartão)', dinheiro: ' (dinheiro)' }[o.paidWith] || '') : aConferir(o) ? 'Pix informado · conferir' : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : o.method === 'maquininha' ? 'Cartão físico (maquininha)' : o.method === 'balcao' ? 'A receber (balcão)' : 'A prazo');
 // Sub-confirmação: o cliente avisou que pagou o Pix, mas ninguém conferiu o comprovante ainda
 const aConferir = (o) => o.status === 'pending' && o.clientPaid === true;
 const quando = (t) => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
