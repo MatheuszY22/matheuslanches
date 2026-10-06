@@ -1,6 +1,9 @@
 'use strict';
-const ADMIN_NAME = 'matheus';
-const ADMIN_HASH = 'aeefd4741ec5108880b213cef40536a41a46217b571d4857a18cf2426edcec47'; // SHA-256 da senha
+// Gerentes (acesso ao painel). A chave é o nome em minúsculas e sem acento; a senha fica só como SHA-256.
+const ADMINS = {
+  matheus: { name: 'Matheus', hash: 'aeefd4741ec5108880b213cef40536a41a46217b571d4857a18cf2426edcec47' },
+  luciana: { name: 'Luciana', hash: '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92' },
+};
 const LS = 'lanchonete-v1';
 const IP_HANDLE = 'matheus-tributino'; // InfiniteTag (InfinitePay), sem o $
 const IP_API = 'https://api.checkout.infinitepay.io';
@@ -130,8 +133,9 @@ function pixPayload({ key, name, city, amount, txid }) {
 /* ---------- Estado de tela ---------- */
 const nameKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 const readSess = () => { try { return JSON.parse(localStorage.getItem('lanche-sess')); } catch (e) { return null; } };
-const IS_ADMIN = sessionStorage.getItem('lanche-admin') === '1';
-const S = { user: IS_ADMIN ? 'Matheus' : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null };
+const ADMIN_KEY = ADMINS[sessionStorage.getItem('lanche-admin')] ? sessionStorage.getItem('lanche-admin') : '';
+const IS_ADMIN = !!ADMIN_KEY;
+const S = { user: IS_ADMIN ? ADMINS[ADMIN_KEY].name : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null };
 
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.remove('hidden'); setTimeout(() => t.classList.add('hidden'), 2200); }
 function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="box">${html}</div>`; m.classList.remove('hidden'); m.onclick = (e) => { if (e.target === m) closeModal(); }; }
@@ -168,10 +172,10 @@ function renderLogin() {
     const nome = $('#nome').value.trim().replace(/\s+/g, ' ');
     if (!nome) return toast('Digite seu nome');
     const key = nameKey(nome);
-    if (key === ADMIN_NAME) {
+    if (ADMINS[key]) {
       if (!S.askPass) { S.askPass = true; renderLogin(); $('#nome').value = nome; $('#senha').focus(); return; }
-      if ((await sha256($('#senha').value)) !== ADMIN_HASH) return toast('Senha incorreta');
-      S.admin = true; sessionStorage.setItem('lanche-admin', '1'); S.user = 'Matheus'; S.profile = null; S.askPass = false; Store.watchOrders(); return render();
+      if ((await sha256($('#senha').value)) !== ADMINS[key].hash) return toast('Senha incorreta');
+      S.admin = true; sessionStorage.setItem('lanche-admin', key); S.user = ADMINS[key].name; S.profile = null; S.askPass = false; Store.watchOrders(); return render();
     }
     try {
       const c = await Store.getCustomer(key);
@@ -181,7 +185,7 @@ function renderLogin() {
   };
   $('#entrar').onclick = go;
   $('#app').querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => { if (e.key === 'Enter') go(); }));
-  $('#nome').oninput = () => { if (S.askPass && nameKey($('#nome').value) !== ADMIN_NAME) { S.askPass = false; const v = $('#nome').value; renderLogin(); $('#nome').value = v; $('#nome').focus(); } };
+  $('#nome').oninput = () => { if (S.askPass && !ADMINS[nameKey($('#nome').value)]) { S.askPass = false; const v = $('#nome').value; renderLogin(); $('#nome').value = v; $('#nome').focus(); } };
   $('#nome').focus();
 }
 function backToName() { S.step = 'nome'; S.pending = null; renderLogin(); }
@@ -304,7 +308,7 @@ async function checkout(method) {
 /* --- administrador --- */
 function renderAdmin() {
   const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['prazo', 'A prazo / pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
-  $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Painel do Matheus</h1><button onclick="logout()">Sair</button></div><div class="wrap">
+  $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Gestão · ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
   ({ rel: tabRel, res: tabRes, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
