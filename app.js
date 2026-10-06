@@ -53,7 +53,7 @@ const Store = {
   },
   watchOrders() { // só o administrador assina os pedidos
     if (!this.cloud || this.ordersUnsub) return;
-    this.ordersUnsub = ['orders', 'purchases', 'stockLog'].map((col) =>
+    this.ordersUnsub = ['orders', 'purchases', 'stockLog', 'customers'].map((col) =>
       this.fs.collection(col).onSnapshot((s) => { this.data[col] = s.docs.map((d) => d.data()); this.onChange(); }));
   },
   /* Mexe no estoque e grava outros documentos (pedido, histórico) de uma vez só.
@@ -375,10 +375,10 @@ async function clientePagou(id) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
+  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['cli', 'Clientes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">Painel de gestão</span><h1>${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
-  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
+  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, cli: tabCli, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
 function tabRel() {
   const r = S.range, now = Date.now();
@@ -480,6 +480,35 @@ function tabEst() {
     <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
     ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
 }
+/* Clientes cadastrados: a gerência vê o contato e o código de acesso (4 últimos dígitos do celular) e pode corrigir */
+function cliRows(q) {
+  const t = nameKey(q || ''), dig = String(q || '').replace(/\D/g, '');
+  const cs = Store.data.customers.slice().sort((a, b) => a.name.localeCompare(b.name)).filter((c) => !t || nameKey(c.name).includes(t) || (dig && soDigitos(c.phone).includes(dig)));
+  return cs.map((c) => {
+    const os = Store.data.orders.filter((o) => nameKey(o.customer) === c.id && o.status !== 'cancelled'), aberto = os.filter((o) => o.status !== 'paid').reduce((a, o) => a + o.total, 0);
+    return `<div class="panel"><div class="row" style="border:0"><div><b>${esc(c.name)}</b><br><small>${esc(c.phone)} · ${esc(c.email)}</small><br><small>Cadastro em ${new Date(c.createdAt).toLocaleDateString('pt-BR')} · ${os.length} pedido(s)${aberto ? ' · <b>em aberto ' + money(aberto) + '</b>' : ''}</small></div>
+      <div style="text-align:right"><small>Código de acesso</small><br><b style="font-size:20px;letter-spacing:2px">${esc(soDigitos(c.phone).slice(-4))}</b><br><button class="btn sec sm" onclick="editCli('${c.id.replace(/'/g, "\\'")}')">Editar</button></div></div></div>`;
+  }).join('') || '<p>Nenhum cliente encontrado.</p>';
+}
+function tabCli() {
+  $('#tab').innerHTML = `<input id="cq" placeholder="Buscar por nome ou celular" oninput="document.querySelector('#clilist').innerHTML=cliRows(this.value)">
+    <p><small>${Store.data.customers.length} cliente(s) cadastrado(s). O código de acesso é o final do celular: se o cliente esquecer, é só informar o número que aparece aqui.</small></p><div id="clilist">${cliRows('')}</div>`;
+}
+function editCli(id) {
+  const c = Store.data.customers.find((x) => x.id === id);
+  modal(`<h2>${esc(c.name)}</h2><p><small>Se o cliente trocou de número, corrija aqui: os 4 últimos dígitos do novo celular passam a ser o código dele.</small></p>
+    <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD" value="${esc(c.phone)}">
+    <input id="cemail" type="email" placeholder="E-mail" value="${esc(c.email)}">
+    <button class="btn" onclick="saveCli('${c.id.replace(/'/g, "\\'")}')">Salvar</button>`);
+}
+async function saveCli(id) {
+  const c = Store.data.customers.find((x) => x.id === id), phone = $('#cphone').value.trim(), email = $('#cemail').value.trim(), d = soDigitos(phone);
+  if (d.length < 10 || d.length > 11) return toast('Celular inválido: use DDD + número');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('E-mail inválido');
+  try { await Store.put('customers', { ...c, phone, email, pinHash: await sha256(c.id + ':' + d.slice(-4)) }); closeModal(); render(); toast('Cliente atualizado'); }
+  catch (e) { toast('Não foi possível salvar. Tente de novo.'); }
+}
+
 /* Venda por fora: lança no sistema o que foi vendido sem passar pelo cardápio (balcão, WhatsApp...) e baixa o estoque */
 const vendaItems = () => Store.data.products.filter((p) => p.active !== false).sort((a, b) => a.name.localeCompare(b.name))
   .flatMap((p) => (p.flavors?.length ? p.flavors : ['']).map((f) => ({ p, flavor: f })));
