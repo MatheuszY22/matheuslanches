@@ -21,6 +21,7 @@ input,select,textarea{width:100%;padding:12px;border:1px solid var(--line);borde
 .prod img,.ph{width:100%;aspect-ratio:1;object-fit:cover;background:#f1e4d3;display:flex;align-items:center;justify-content:center;font-size:40px}
 .prod .i{padding:10px}.prod b{display:block}.prod .pr{color:#9a6700;font-weight:700}
 .prod small{color:var(--mut)}
+.prod .add{display:block;width:100%;margin-top:8px;padding:8px;border:0;border-radius:8px;background:var(--pri);color:#111;font-weight:700;font-size:14px}.prod .add:hover{background:var(--pri2)}
 .cartbar{position:fixed;left:0;right:0;bottom:0;padding:12px 16px;background:#111;color:var(--pri);border-top:3px solid var(--pri);display:flex;justify-content:space-between;align-items:center;cursor:pointer}
 .modal{position:fixed;inset:0;background:#0008;display:flex;align-items:flex-end;justify-content:center;z-index:20}
 .modal .box{background:#fff;width:100%;max-width:480px;max-height:92vh;overflow:auto;border-radius:18px 18px 0 0;padding:18px}
@@ -55,6 +56,10 @@ td.n,th.n{text-align:right}
 td.low,.low{color:#c92a2a;font-weight:700}td.warn{color:var(--warn)}
 .stat.click{cursor:pointer;transition:transform .1s,box-shadow .1s}.stat.click:hover{box-shadow:0 0 0 2px var(--pri)}.stat.click:active{transform:scale(.98)}
 .stat.click::after{content:"ver detalhes ›";display:block;font-size:11px;color:var(--mut);margin-top:2px}
+/* categorias do cardápio: barra grudada no topo que rola até a seção */
+.cats{display:flex;gap:6px;overflow:auto;padding:8px 16px;background:var(--bg);position:sticky;top:59px;z-index:4;border-bottom:1px solid var(--line);scrollbar-width:none}.cats::-webkit-scrollbar{display:none}
+.cats button{border:2px solid var(--pri);background:#fff;color:#111;padding:6px 14px;border-radius:20px;white-space:nowrap;font-weight:600;font-size:14px}.cats button:active{background:var(--pri)}
+.cath{margin:18px 0 10px;font-size:18px;color:#111}.cath small{color:var(--mut);font-weight:400}.wrap .cath:first-of-type{margin-top:4px}
 /* pedido em aberto do cliente (Pix) e sub-confirmação de pagamento */
 .aberto{background:#fff3bf;border:1px solid var(--pri);border-radius:12px;padding:10px 12px;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .aberto.ok{background:#e6f7eb;border-color:var(--ok)}.aberto .acts{display:flex;gap:6px}.aberto small{color:var(--mut)}
