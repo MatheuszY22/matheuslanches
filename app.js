@@ -135,7 +135,7 @@ const nameKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').
 const readSess = () => { try { return JSON.parse(localStorage.getItem('lanche-sess')); } catch (e) { return null; } };
 const ADMIN_KEY = ADMINS[sessionStorage.getItem('lanche-admin')] ? sessionStorage.getItem('lanche-admin') : '';
 const IS_ADMIN = !!ADMIN_KEY;
-const S = { user: IS_ADMIN ? ADMINS[ADMIN_KEY].name : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null };
+const S = { user: IS_ADMIN ? ADMINS[ADMIN_KEY].name : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null, openOrders: [] };
 
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.remove('hidden'); setTimeout(() => t.classList.add('hidden'), 2200); }
 function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="box">${html}</div>`; m.classList.remove('hidden'); m.onclick = (e) => { if (e.target === m) closeModal(); }; }
@@ -191,7 +191,7 @@ function renderLogin() {
 function backToName() { S.step = 'nome'; S.pending = null; renderLogin(); }
 function enterCustomer(c) {
   S.user = c.name; S.profile = c; S.step = 'nome'; S.pending = null;
-  localStorage.setItem('lanche-sess', JSON.stringify(c)); localStorage.setItem('lanche-ok:' + c.id, '1'); render();
+  localStorage.setItem('lanche-sess', JSON.stringify(c)); localStorage.setItem('lanche-ok:' + c.id, '1'); render(); checkOpen();
 }
 async function confirmPin() {
   try {
@@ -211,14 +211,14 @@ async function registerCustomer() {
     await Store.put('customers', c); enterCustomer(c);
   } catch (e) { toast('Não foi possível cadastrar. Tente de novo.'); }
 }
-function logout() { S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
+function logout() { S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.openOrders = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
 /* --- cliente --- */
 const out = (p) => p.active === false || availableTotal(p) <= 0;
 function renderMenu() {
   const ps = Store.data.products.slice().sort((a, b) => a.name.localeCompare(b.name));
   const n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
   $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Olá, ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div>
-    <div class="wrap">${ps.length ? '' : '<p>Nenhum produto cadastrado ainda.</p>'}<div class="grid">${ps.map((p) => `
+    <div class="wrap">${openBanner()}${ps.length ? '' : '<p>Nenhum produto cadastrado ainda.</p>'}<div class="grid">${ps.map((p) => `
       <div class="prod ${out(p) ? 'off' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
       <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}${!out(p) && availableTotal(p) <= 5 ? `<br><small class="low">Restam ${availableTotal(p)}</small>` : ''}</div></div>`).join('')}</div><div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>🛒 ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
@@ -295,14 +295,62 @@ async function checkout(method) {
     location.href = order.payUrl; return;
   }
   try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
-  S.cart = []; render();
-  if (method === 'maquininha') return modal(`<h2>Pedido registrado ✅</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`);
-  const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: order.total, txid: order.id });
+  S.cart = [];
+  if (method === 'maquininha') { render(); return modal(`<h2>Pedido registrado ✅</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
+  // Pix: o pedido fica em aberto neste aparelho até o cliente avisar que pagou
+  saveOpen(openIds().concat(order.id)); S.openOrders.push(order); render();
+  pixModal(order);
+}
+
+/* ---------- Pedido em aberto do cliente (Pix) ----------
+   Fica guardado no aparelho até o cliente avisar que pagou. O aviso (clientPaid) não dá baixa: só marca para
+   o Matheus ou a Luciana conferirem o comprovante no painel e confirmarem o recebimento. */
+const openKey = () => 'lanche-abertos:' + (S.profile?.id || nameKey(S.user));
+const openIds = () => { try { return JSON.parse(localStorage.getItem(openKey()) || '[]'); } catch (e) { return []; } };
+const saveOpen = (ids) => localStorage.setItem(openKey(), JSON.stringify(ids.filter((x, i) => ids.indexOf(x) === i)));
+async function getOrder(id) {
+  if (Store.cloud) { const d = await Store.fs.collection('orders').doc(id).get(); return d.exists ? d.data() : null; }
+  return Store.data.orders.find((o) => o.id === id) || null;
+}
+// Relê os pedidos guardados: pago ou cancelado sai da lista; pendente continua (com ou sem aviso de pagamento)
+async function checkOpen() {
+  if (!S.user || S.admin) return;
+  const ids = openIds(), os = [];
+  for (const id of ids) {
+    try { const o = await getOrder(id); if (o && o.status === 'pending') os.push(o); }
+    catch (e) { const o = S.openOrders.find((x) => x.id === id); if (o) os.push(o); } // sem conexão: mantém o que já sabia
+  }
+  saveOpen(os.map((o) => o.id)); S.openOrders = os;
+  if (S.user && !S.admin && $('#modal').classList.contains('hidden')) renderMenu();
+}
+const openBanner = () => S.openOrders.map((o) => o.clientPaid
+  ? `<div class="aberto ok"><div><b>Pix informado · ${money(o.total)}</b><br><small>${itemsText(o)} · o Matheus confere o comprovante e dá a baixa</small></div></div>`
+  : `<div class="aberto"><div><b>Pedido em aberto · ${money(o.total)}</b><br><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · ${itemsText(o)}</small></div>
+    <div class="acts"><button class="btn sm" onclick="pixModal('${o.id}')">Pagar com Pix</button><button class="btn ok sm" onclick="clientePagou('${o.id}')">Já paguei</button></div></div>`).join('');
+function pixModal(x) {
+  const o = typeof x === 'string' ? S.openOrders.find((y) => y.id === x) : x, st = Store.data.settings;
+  if (!o) return;
+  const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: o.total, txid: o.id });
   let qr = ''; try { const q = qrcode(0, 'M'); q.addData(code); q.make(); qr = q.createImgTag(5, 8); } catch (e) {}
-  modal(`<h2>Pague com Pix</h2><p>Total: <b>${money(order.total)}</b></p><div style="text-align:center">${qr}</div>
+  modal(`<h2>Pague com Pix</h2><p>Total: <b>${money(o.total)}</b></p><div style="text-align:center">${qr}</div>
     <div class="pix" id="pixcode">${code}</div>
     <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('pixcode').textContent).then(()=>toast('Pix copiado!'))">Copiar Pix copia e cola</button>
-    <p><small>Depois de pagar, o Matheus confirma o recebimento. Até lá o pedido fica como pendente.</small></p><button class="btn sec" onclick="closeModal()">Fechar</button>`);
+    <div class="ask"><p><b>Deu certo o pagamento?</b></p><button class="btn ok" onclick="clientePagou('${o.id}')">Sim, já paguei</button><br><br><button class="btn sec" onclick="aindaNao()">Ainda não</button></div>
+    <p><small>Se ainda não pagou, o pedido fica em aberto: dá para pagar depois pelo aviso no topo do cardápio ou no balcão.</small></p>`);
+}
+function aindaNao() { closeModal(); render(); toast('Pedido ficou em aberto. Pague quando puder.'); }
+async function clientePagou(id) {
+  let o; try { o = await getOrder(id); } catch (e) { return toast('Sem conexão. Tente de novo.'); }
+  const tira = () => { saveOpen(openIds().filter((x) => x !== id)); S.openOrders = S.openOrders.filter((x) => x.id !== id); };
+  if (!o) { tira(); render(); return toast('Pedido não encontrado'); }
+  if (o.status === 'cancelled') { tira(); render(); return modal('<h2>Pedido cancelado</h2><p>Esse pedido foi cancelado pelo Matheus. Se você pagou, fale com ele para resolver.</p><button class="btn" onclick="closeModal()">Ok</button>'); }
+  if (o.status === 'paid') { tira(); render(); return modal(`<h2>Já está pago ✅</h2><p>O pedido de <b>${money(o.total)}</b> já foi baixado. Obrigado!</p><button class="btn" onclick="closeModal()">Ok</button>`); }
+  if (!o.clientPaid) {
+    o = { ...o, clientPaid: true, clientPaidAt: Date.now() };
+    try { await Store.put('orders', o); } catch (e) { return toast('Não foi possível avisar. Tente de novo.'); }
+  }
+  S.openOrders = S.openOrders.map((x) => (x.id === id ? o : x)); render();
+  modal(`<h2>Obrigado! ✅</h2><p>Pedido de <b>${money(o.total)}</b> anotado como <b>pago pelo Pix</b>. O Matheus ou a Luciana conferem o comprovante e dão a baixa.</p><button class="btn" onclick="closeModal()">Ok</button>`);
 }
 
 /* --- administrador --- */
@@ -316,28 +364,38 @@ function tabRel() {
   const r = S.range, now = Date.now();
   const from = r === 'all' ? 0 : r === '1' ? new Date().setHours(0, 0, 0, 0) : now - Number(r) * 86400000;
   const os = Store.data.orders.filter((o) => o.createdAt >= from && o.status !== 'cancelled');
-  const paid = os.filter((o) => o.status === 'paid'), pend = os.filter((o) => o.status !== 'paid');
+  const paid = os.filter((o) => o.status === 'paid'), pend = os.filter((o) => o.status !== 'paid'), conf = pend.filter(aConferir);
   const sum = (a) => a.reduce((x, o) => x + o.total, 0);
   const byDay = {}; os.forEach((o) => { const d = byDay[dayKey(o.createdAt)] ||= { n: 0, paid: 0, pend: 0 }; d.n++; o.status === 'paid' ? (d.paid += o.total) : (d.pend += o.total); });
   const prods = {}; os.forEach((o) => o.items.forEach((i) => { const p = prods[i.name] ||= { q: 0, v: 0 }; p.q += i.qty; p.v += i.qty * i.price; }));
   const top = Object.entries(prods).sort((a, b) => b[1].q - a[1].q), max = top[0]?.[1].q || 1;
   $('#tab').innerHTML = `<select onchange="S.range=this.value;render()">${[['1', 'Hoje'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['all', 'Tudo']].map(([v, t]) => `<option value="${v}" ${r === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
     <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Total vendido</span><b>${money(sum(os))}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b style="color:var(--ok)">${money(sum(paid))}</b></div>
-    <div class="stat click" onclick="detail('areceber')"><span>A receber</span><b style="color:var(--warn)">${money(sum(pend))}</b></div><div class="stat click" onclick="detail('pedidos')"><span>Pedidos</span><b>${os.length}</b></div></div>
+    <div class="stat click" onclick="detail('areceber')"><span>A receber</span><b style="color:var(--warn)">${money(sum(pend))}</b></div><div class="stat click" onclick="detail('conferir')"><span>Pix informado, a conferir</span><b style="color:#1971c2">${money(sum(conf))}</b><span>${conf.length} pedido(s)</span></div><div class="stat click" onclick="detail('pedidos')"><span>Pedidos</span><b>${os.length}</b></div></div>
     <div class="panel"><h3>Vendas por dia</h3><table><tr><th>Dia</th><th class="n">Pedidos</th><th class="n">Recebido</th><th class="n">A receber</th><th class="n">Total</th></tr>
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${d.n}</td><td class="n">${money(d.paid)}</td><td class="n">${money(d.pend)}</td><td class="n"><b>${money(d.paid + d.pend)}</b></td></tr>`).join('') || '<tr><td colspan=5>Sem vendas no período</td></tr>'}</table></div>
     <div class="panel"><h3>Produtos mais vendidos</h3>${top.map(([n, p]) => `<div style="margin-bottom:10px"><div class="row" style="border:0;padding:0"><span>${esc(n)}</span><span>${p.q} un · ${money(p.v)}</span></div><div class="bar"><i style="width:${(p.q / max) * 100}%"></i></div></div>`).join('') || 'Sem dados'}</div>`;
 }
 function tabPrazo() {
   const pend = Store.data.orders.filter((o) => o.status !== 'paid' && o.status !== 'cancelled').sort((a, b) => a.createdAt - b.createdAt);
-  const by = {}; pend.forEach((o) => (by[o.customer] ||= []).push(o));
-  $('#tab').innerHTML = Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row" style="border:0"><h3 style="margin:0">${esc(c)}</h3><b>${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
-    ${os.map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag">${ordLabel(o)}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}</div>
-    <div style="text-align:right"><b>${money(o.total)}</b><br><button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button> <button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button></div></div>`).join('')}
-    <br><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div>`).join('') : '<p>Nenhum pedido pendente 🎉</p>';
+  const conf = pend.filter(aConferir), by = {};
+  // quem já avisou que pagou aparece primeiro: é só conferir o comprovante e dar baixa
+  pend.slice().sort((a, b) => Number(aConferir(b)) - Number(aConferir(a)) || a.createdAt - b.createdAt).forEach((o) => (by[o.customer] ||= []).push(o));
+  const aviso = conf.length ? `<div class="panel conf"><b>${conf.length} pedido(s) com Pix informado pelo cliente · ${money(conf.reduce((a, o) => a + o.total, 0))}</b><br><small>Confira o comprovante no extrato e clique em <b>Confirmar Pix</b> para dar a baixa. Se o Pix não caiu, clique em <b>Não caiu</b>: o pedido volta a ficar em aberto para o cliente.</small></div>` : '';
+  $('#tab').innerHTML = aviso + (Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row" style="border:0"><h3 style="margin:0">${esc(c)}</h3><b>${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
+    ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
+    <div style="text-align:right"><b>${money(o.total)}</b><br>${aConferir(o) ? `<button class="btn ok sm" onclick="markPaid('${o.id}')">Confirmar Pix</button> <button class="btn sec sm" onclick="naoCaiu('${o.id}')">Não caiu</button>` : `<button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button> <button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button>`}</div></div>`).join('')}
+    <br><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div>`).join('') : '<p>Nenhum pedido pendente 🎉</p>');
 }
-async function markPaid(id) { const o = Store.data.orders.find((x) => x.id === id); await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now() }); toast('Marcado como pago'); }
-async function payAll(c) { if (!confirm(`Marcar tudo de ${c} como pago?`)) return; for (const o of Store.data.orders.filter((x) => x.customer === c && x.status !== 'paid' && x.status !== 'cancelled')) await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now() }); }
+// Baixa final: registra quem conferiu e por onde o dinheiro entrou
+const baixa = (o) => ({ ...o, status: 'paid', paidAt: Date.now(), paidBy: S.user, paidWith: o.paidWith || (o.method === 'pix' ? 'pix' : o.method === 'maquininha' ? 'maquininha' : '') });
+async function markPaid(id) { const o = Store.data.orders.find((x) => x.id === id); await Store.put('orders', baixa(o)); toast(aConferir(o) ? 'Pix conferido e pedido baixado' : 'Marcado como pago'); }
+async function payAll(c) { if (!confirm(`Marcar tudo de ${c} como pago?`)) return; for (const o of Store.data.orders.filter((x) => x.customer === c && x.status !== 'paid' && x.status !== 'cancelled')) await Store.put('orders', baixa(o)); }
+async function naoCaiu(id) {
+  const o = Store.data.orders.find((x) => x.id === id);
+  if (!confirm(`O Pix de ${o.customer} (${money(o.total)}) não apareceu no extrato? O pedido volta a ficar em aberto para o cliente.`)) return;
+  await Store.put('orders', { ...o, clientPaid: false, naoCaiuEm: Date.now(), naoCaiuPor: S.user }); toast('Pedido voltou para em aberto');
+}
 
 function tabProd() {
   $('#tab').innerHTML = `<button class="btn" onclick="editProd()">+ Novo produto</button><br><br>${Store.data.products.map((p) => `<div class="panel row" style="border:0">
@@ -506,9 +564,15 @@ function tabRes() {
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n" style="color:${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
 }
 /* Detalhe dos cartões: abre os registros que formam cada valor, no período escolhido */
-const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + (o.paidWith === 'pix' ? ' (Pix)' : o.paidWith === 'credit_card' ? ' (cartão)' : '') : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : o.method === 'maquininha' ? 'Cartão físico (maquininha)' : 'A prazo');
+const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + ({ pix: ' (Pix)', credit_card: ' (cartão)', maquininha: ' (maquininha)' }[o.paidWith] || '') : aConferir(o) ? 'Pix informado · conferir' : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : o.method === 'maquininha' ? 'Cartão físico (maquininha)' : 'A prazo');
+// Sub-confirmação: o cliente avisou que pagou o Pix, mas ninguém conferiu o comprovante ainda
+const aConferir = (o) => o.status === 'pending' && o.clientPaid === true;
+const quando = (t) => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const subConf = (o) => (o.status === 'paid' && o.paidBy ? `<br><small class="sub">Baixa por ${esc(o.paidBy)} em ${quando(o.paidAt)}${o.clientPaidAt ? ' · cliente avisou em ' + quando(o.clientPaidAt) : ''}</small>`
+  : aConferir(o) ? `<br><small class="sub conf">Cliente informou o pagamento em ${quando(o.clientPaidAt)} · conferir o comprovante</small>`
+  : o.naoCaiuEm ? `<br><small class="sub">Cliente avisou, mas ${esc(o.naoCaiuPor || '')} não achou o Pix em ${quando(o.naoCaiuEm)}</small>` : '');
 const itemsText = (o) => o.items.map((i) => i.qty + '× ' + esc(i.name) + (i.flavor ? ' (' + esc(i.flavor) + ')' : '')).join(', ');
-const ordRows = (os) => os.slice().sort((a, b) => b.createdAt - a.createdAt).map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · <b>${esc(o.customer)}</b> · <span class="tag">${ordLabel(o)}</span></small><br>${itemsText(o)}</div><b>${money(o.total)}</b></div>`).join('') || '<p>Nenhum registro no período.</p>';
+const ordRows = (os) => os.slice().sort((a, b) => b.createdAt - a.createdAt).map((o) => `<div class="row"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · <b>${esc(o.customer)}</b> · <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span></small><br>${itemsText(o)}${subConf(o)}</div><b>${money(o.total)}</b></div>`).join('') || '<p>Nenhum registro no período.</p>';
 const cmpRows = (cs) => cs.slice().sort((a, b) => b.date.localeCompare(a.date)).map((c) => `<div class="row"><div><small>${dayLabel(c.date)} · ${esc(c.category)}${c.supplier ? ' · ' + esc(c.supplier) : ''}</small><br>${esc(c.description)}</div><b>${money(c.value)}</b></div>`).join('') || '<p>Nenhuma compra no período.</p>';
 function detail(kind, cat) {
   const from = rangeFrom(), fromD = dayKey(from), per = { 1: 'hoje', 7: 'últimos 7 dias', 30: 'últimos 30 dias', all: 'todo o período' }[S.range];
@@ -523,6 +587,7 @@ function detail(kind, cat) {
   else if (kind === 'pedidos') h = head('Pedidos', os.length, money(sum(os))) + ordRows(os);
   else if (kind === 'recebido') h = head('Recebido', money(sum(paid)), paid.length + ' pedido(s) pago(s)') + ordRows(paid);
   else if (kind === 'areceber') h = head('A receber', money(sum(pend)), pend.length + ' pedido(s) em aberto') + ordRows(pend);
+  else if (kind === 'conferir') { const conf = pend.filter(aConferir); h = head('Pix informado pelo cliente, a conferir', money(sum(conf)), conf.length + ' pedido(s) · confira o comprovante e dê a baixa em Pendentes') + ordRows(conf); }
   else if (kind === 'compras') h = head('Gasto em compras' + (cat ? ' · ' + esc(cat) : ''), money(tot(cps)), cps.length + ' compra(s)') + cmpRows(cps);
   else if (kind === 'caixa') h = head('Caixa', money(sum(paid) - tot(allC)), 'recebido − compras') + '<h3>Entrou (' + money(sum(paid)) + ')</h3>' + ordRows(paid) + '<h3>Saiu (' + money(tot(allC)) + ')</h3>' + cmpRows(allC);
   else if (kind === 'lucro') {
@@ -591,3 +656,5 @@ Store.init();
 if (S.admin) Store.watchOrders();
 render();
 handleReturn();
+checkOpen();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkOpen(); });

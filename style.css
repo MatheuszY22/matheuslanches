@@ -55,3 +55,9 @@ td.n,th.n{text-align:right}
 td.low,.low{color:#c92a2a;font-weight:700}td.warn{color:var(--warn)}
 .stat.click{cursor:pointer;transition:transform .1s,box-shadow .1s}.stat.click:hover{box-shadow:0 0 0 2px var(--pri)}.stat.click:active{transform:scale(.98)}
 .stat.click::after{content:"ver detalhes ›";display:block;font-size:11px;color:var(--mut);margin-top:2px}
+/* pedido em aberto do cliente (Pix) e sub-confirmação de pagamento */
+.aberto{background:#fff3bf;border:1px solid var(--pri);border-radius:12px;padding:10px 12px;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.aberto.ok{background:#e6f7eb;border-color:var(--ok)}.aberto .acts{display:flex;gap:6px}.aberto small{color:var(--mut)}
+.ask{background:#f6f1ea;border-radius:12px;padding:12px;margin:12px 0;text-align:center}.ask p{margin:0 0 10px}
+.tag.conf{background:#d3f9d8;color:#1b5e20}small.sub{color:var(--mut)}small.sub.conf{color:#1b5e20;font-weight:600}
+.row.conf{background:#f1fbf3;margin:0 -8px;padding:8px}.row.conf .btn{white-space:nowrap}.panel.conf{border-left:4px solid var(--ok)}
