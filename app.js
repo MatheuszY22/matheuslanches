@@ -10,6 +10,12 @@ const IP_API = 'https://api.checkout.infinitepay.io';
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Ícones em SVG (só apresentação)
+const ICON = {
+  dish: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18"/><path d="M5 17a7 7 0 0 1 14 0"/><path d="M12 10V8"/><path d="M10 8h4"/><path d="M2 20h20"/></svg>',
+  bag: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+  check: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>',
+};
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const dayLabel = (k) => k.split('-').reverse().join('/');
@@ -149,23 +155,23 @@ function render() {
 }
 
 function renderLogin() {
-  const L = (inner) => ($('#app').innerHTML = `<div class="login"><img src="logo.png" alt="L&M Lanches" class="logo">${inner}</div>`);
+  const L = (title, inner) => ($('#app').innerHTML = `<div class="login"><div class="brandbox"><img src="logo.png" alt="L&M Lanches" class="logo"><span class="eyebrow">Cardápio digital</span><h1>${title}</h1><i class="rule"></i></div><div class="form">${inner}</div></div>`);
   if (S.step === 'pin') {
-    L(`<p>O nome <b>${esc(S.pending.name)}</b> já tem cadastro. Para confirmar que é você, digite os <b>4 últimos números do celular</b> cadastrado.</p>
+    L('Confirme que é você', `<p>O nome <b>${esc(S.pending.name)}</b> já tem cadastro. Para confirmar que é você, digite os <b>4 últimos números do celular</b> cadastrado.</p>
       <input id="pin" inputmode="numeric" maxlength="4" placeholder="Últimos 4 dígitos" autocomplete="off">
-      <button class="btn" id="entrar">Confirmar</button><br><br><button class="btn sec" id="voltar">Não sou eu, usar outro nome</button>`);
+      <div class="stack"><button class="btn" id="entrar">Confirmar</button><button class="btn sec" id="voltar">Não sou eu, usar outro nome</button></div>`);
     $('#entrar').onclick = confirmPin; $('#voltar').onclick = backToName; $('#pin').onkeydown = (e) => { if (e.key === 'Enter') confirmPin(); };
     return $('#pin').focus();
   }
   if (S.step === 'cad') {
-    L(`<p>Olá, <b>${esc(S.pending.name)}</b>! Primeira vez por aqui. Cadastre seu contato uma só vez: ele fica salvo e agiliza o pagamento.</p>
+    L('Seja bem-vindo', `<p>Olá, <b>${esc(S.pending.name)}</b>! Primeira vez por aqui. Cadastre seu contato uma só vez: ele fica salvo e agiliza o pagamento.</p>
       <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD, ex.: (64) 99999-9999" autocomplete="tel">
       <input id="cemail" type="email" placeholder="E-mail" autocomplete="email">
-      <button class="btn" id="entrar">Cadastrar e entrar</button><br><br><button class="btn sec" id="voltar">Voltar</button>`);
+      <div class="stack"><button class="btn" id="entrar">Cadastrar e entrar</button><button class="btn sec" id="voltar">Voltar</button></div>`);
     $('#entrar').onclick = registerCustomer; $('#voltar').onclick = backToName; $('#cemail').onkeydown = (e) => { if (e.key === 'Enter') registerCustomer(); };
     return $('#cphone').focus();
   }
-  L(`<p>Digite seu nome para entrar</p><input id="nome" placeholder="Seu nome" autocomplete="off" value="">
+  L('Bem-vindo', `<p>Digite seu nome para ver o cardápio e fazer o pedido</p><input id="nome" placeholder="Seu nome" autocomplete="off" value="">
     ${S.askPass ? '<input id="senha" type="password" placeholder="Senha do administrador">' : ''}
     <button class="btn" id="entrar">Entrar</button>`);
   const go = async () => {
@@ -213,34 +219,35 @@ async function registerCustomer() {
 }
 function logout() { S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.openOrders = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
 /* --- categorias: o cardápio e a lista de produtos ficam separados por tipo, nesta ordem --- */
-const CATP = ['Refeições', 'Lanches', 'Bebidas', 'Sobremesas', 'Outros'];
+const CATP = ['Entradas', 'Refeições', 'Lanches', 'Acompanhamentos', 'Bebidas', 'Sobremesas', 'Cafés', 'Outros'];
 const catOf = (p) => (p.cat || '').trim() || 'Outros';
-const catOrder = (c) => { const i = CATP.indexOf(c); return i < 0 ? CATP.length : i; };
+// categorias digitadas pelo gestor entram depois das fixas; "Outros" fica sempre por último
+const catOrder = (c) => { if (c === 'Outros') return 1e9; const i = CATP.indexOf(c); return i < 0 ? CATP.length : i; };
 const catId = (c) => 'cat-' + c.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
 function groupCats(ps) {
   const by = {}; ps.forEach((p) => (by[catOf(p)] ||= []).push(p));
   return Object.entries(by).sort((a, b) => catOrder(a[0]) - catOrder(b[0]) || a[0].localeCompare(b[0])).map(([c, l]) => [c, l.sort((x, y) => x.name.localeCompare(y.name))]);
 }
 const allCats = () => [...new Set(CATP.concat(Store.data.products.map(catOf)))];
-function irCat(id) { const el = document.getElementById(id); if (el) window.scrollTo({ top: el.offsetTop - 110, behavior: 'smooth' }); }
+function irCat(id) { const el = document.getElementById(id); if (el) window.scrollTo({ top: el.offsetTop - 132, behavior: 'smooth' }); }
 /* --- cliente --- */
 const out = (p) => p.active === false || availableTotal(p) <= 0;
 function renderMenu() {
   const grupos = groupCats(Store.data.products), n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
-  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : '<div class="ph">🍽️</div>'}
-      <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<br><small>${p.flavors.length} sabores</small>` : ''}${!out(p) && availableTotal(p) <= 5 ? `<br><small class="low">Restam ${availableTotal(p)}</small>` : ''}
+  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
+      <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}${!out(p) && availableTotal(p) <= 5 ? `<small class="low">Restam ${availableTotal(p)}</small>` : ''}
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
-  $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Olá, ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div>
+  $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
     ${grupos.length > 1 ? `<div class="cats">${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
-    <div class="wrap">${openBanner()}${grupos.length ? '' : '<p>Nenhum produto cadastrado ainda.</p>'}
+    <div class="wrap">${openBanner()}${grupos.length ? '' : '<p class="empty">Nenhum produto cadastrado ainda.</p>'}
     ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2><div class="grid">${ps.map(card).join('')}</div>`).join('')}<div class="pad"></div></div>
-    ${n ? `<div class="cartbar" onclick="openCart()"><span>🛒 ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
+    ${n ? `<div class="cartbar" onclick="openCart()"><span>${ICON.bag} ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
 }
 const cartTotal = () => S.cart.reduce((a, i) => a + i.price * i.qty, 0);
 function pick(id) {
   const p = Store.data.products.find((x) => x.id === id);
   if (!p.flavors?.length) return addCart(p, '');
-  modal(`<h2>${esc(p.name)}</h2><p>Escolha o sabor:</p><div class="chips">${p.flavors.map((f, i) => { const a = available(p, f) - inCart(p.id, f); return `<button class="chip" ${a <= 0 ? 'disabled' : `onclick="pickFlavor('${id}',${i})"`}>${esc(f)}${a <= 0 ? ' · esgotado' : a <= 5 ? ` · restam ${a}` : ''}</button>`; }).join('')}</div>`);
+  modal(`<h2>${esc(p.name)}</h2><p class="lead">Escolha o sabor:</p><div class="chips">${p.flavors.map((f, i) => { const a = available(p, f) - inCart(p.id, f); return `<button class="chip" ${a <= 0 ? 'disabled' : `onclick="pickFlavor('${id}',${i})"`}>${esc(f)}${a <= 0 ? ' · esgotado' : a <= 5 ? ` · restam ${a}` : ''}</button>`; }).join('')}</div>`);
 }
 function pickFlavor(id, i) { const p = Store.data.products.find((x) => x.id === id); addCart(p, p.flavors[i]); }
 function addCart(p, flavor) {
@@ -251,12 +258,12 @@ function addCart(p, flavor) {
 }
 function openCart() {
   if (!S.cart.length) return closeModal();
-  modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div>${esc(i.name)}${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
-    <div class="qty"><button onclick="qty(${k},-1)">−</button>${i.qty}<button onclick="qty(${k},1)">+</button></div></div>`).join('')}
-    <p style="font-size:20px"><b>Total: ${money(cartTotal())}</b></p>
-    <button class="btn" onclick="payOnline()">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button>${contato() ? `<p style="margin:6px 0 0"><small>Contato: ${esc(contato().phone)} · ${esc(contato().email)} <a href="#" onclick="editContato();return false">alterar</a></small></p>` : ''}<br>
-    <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button><br><br>
-    <button class="btn sec" onclick="checkout('maquininha')">Pagar no cartão físico (maquininha)</button>`);
+  modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div><span class="nm">${esc(i.name)}</span>${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
+    <div class="qty"><button onclick="qty(${k},-1)" aria-label="Menos">−</button>${i.qty}<button onclick="qty(${k},1)" aria-label="Mais">+</button></div></div>`).join('')}
+    <div class="total"><span>Total</span><b>${money(cartTotal())}</b></div>
+    <div class="stack"><button class="btn" onclick="payOnline()">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button>${contato() ? `<p class="hint">Contato: ${esc(contato().phone)} · ${esc(contato().email)} <a href="#" onclick="editContato();return false">alterar</a></p>` : ''}
+    <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button>
+    <button class="btn sec" onclick="checkout('maquininha')">Pagar no cartão físico (maquininha)</button></div>`);
 }
 function qty(k, d) {
   const l = S.cart[k], p = Store.data.products.find((x) => x.id === l.productId);
@@ -267,7 +274,7 @@ const contato = () => (S.profile ? { phone: S.profile.phone, email: S.profile.em
 function payOnline() { checkout('infinitepay'); }
 function editContato() {
   const c = contato() || { phone: '', email: '' };
-  modal(`<h2>Meu contato</h2><p><small>Esses dados vão preenchidos na tela de pagamento. Se trocar o celular, os 4 últimos dígitos novos passam a ser o seu código de acesso.</small></p>
+  modal(`<h2>Meu contato</h2><p class="lead"><small>Esses dados vão preenchidos na tela de pagamento. Se trocar o celular, os 4 últimos dígitos novos passam a ser o seu código de acesso.</small></p>
     <input id="cphone" type="tel" inputmode="tel" placeholder="Celular com DDD" value="${esc(c.phone)}">
     <input id="cemail" type="email" placeholder="E-mail" value="${esc(c.email)}">
     <button class="btn" onclick="saveContato()">Salvar</button>`);
@@ -309,7 +316,7 @@ async function checkout(method) {
   }
   try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
   S.cart = [];
-  if (method === 'maquininha') { render(); return modal(`<h2>Pedido registrado ✅</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
+  if (method === 'maquininha') { render(); return modal(`<h2>${ICON.check} Pedido registrado</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
   // Pix: o pedido fica em aberto neste aparelho até o cliente avisar que pagou
   saveOpen(openIds().concat(order.id)); S.openOrders.push(order); render();
   pixModal(order);
@@ -345,11 +352,11 @@ function pixModal(x) {
   if (!o) return;
   const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: o.total, txid: o.id });
   let qr = ''; try { const q = qrcode(0, 'M'); q.addData(code); q.make(); qr = q.createImgTag(5, 8); } catch (e) {}
-  modal(`<h2>Pague com Pix</h2><p>Total: <b>${money(o.total)}</b></p><div style="text-align:center">${qr}</div>
+  modal(`<h2>Pague com Pix</h2><div class="total"><span>Total</span><b>${money(o.total)}</b></div><div class="qrwrap">${qr}</div>
     <div class="pix" id="pixcode">${code}</div>
     <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('pixcode').textContent).then(()=>toast('Pix copiado!'))">Copiar Pix copia e cola</button>
-    <div class="ask"><p><b>Deu certo o pagamento?</b></p><button class="btn ok" onclick="clientePagou('${o.id}')">Sim, já paguei</button><br><br><button class="btn sec" onclick="aindaNao()">Ainda não</button></div>
-    <p><small>Se ainda não pagou, o pedido fica em aberto: dá para pagar depois pelo aviso no topo do cardápio ou no balcão.</small></p>`);
+    <div class="ask"><p><b>Deu certo o pagamento?</b></p><div class="stack"><button class="btn ok" onclick="clientePagou('${o.id}')">Sim, já paguei</button><button class="btn sec" onclick="aindaNao()">Ainda não</button></div></div>
+    <p class="hint">Se ainda não pagou, o pedido fica em aberto: dá para pagar depois pelo aviso no topo do cardápio ou no balcão.</p>`);
 }
 function aindaNao() { closeModal(); render(); toast('Pedido ficou em aberto. Pague quando puder.'); }
 async function clientePagou(id) {
@@ -357,19 +364,19 @@ async function clientePagou(id) {
   const tira = () => { saveOpen(openIds().filter((x) => x !== id)); S.openOrders = S.openOrders.filter((x) => x.id !== id); };
   if (!o) { tira(); render(); return toast('Pedido não encontrado'); }
   if (o.status === 'cancelled') { tira(); render(); return modal('<h2>Pedido cancelado</h2><p>Esse pedido foi cancelado pelo Matheus. Se você pagou, fale com ele para resolver.</p><button class="btn" onclick="closeModal()">Ok</button>'); }
-  if (o.status === 'paid') { tira(); render(); return modal(`<h2>Já está pago ✅</h2><p>O pedido de <b>${money(o.total)}</b> já foi baixado. Obrigado!</p><button class="btn" onclick="closeModal()">Ok</button>`); }
+  if (o.status === 'paid') { tira(); render(); return modal(`<h2>${ICON.check} Já está pago</h2><p>O pedido de <b>${money(o.total)}</b> já foi baixado. Obrigado!</p><button class="btn" onclick="closeModal()">Ok</button>`); }
   if (!o.clientPaid) {
     o = { ...o, clientPaid: true, clientPaidAt: Date.now() };
     try { await Store.put('orders', o); } catch (e) { return toast('Não foi possível avisar. Tente de novo.'); }
   }
   S.openOrders = S.openOrders.map((x) => (x.id === id ? o : x)); render();
-  modal(`<h2>Obrigado! ✅</h2><p>Pedido de <b>${money(o.total)}</b> anotado como <b>pago pelo Pix</b>. O Matheus ou a Luciana conferem o comprovante e dão a baixa.</p><button class="btn" onclick="closeModal()">Ok</button>`);
+  modal(`<h2>${ICON.check} Obrigado!</h2><p>Pedido de <b>${money(o.total)}</b> anotado como <b>pago pelo Pix</b>. O Matheus ou a Luciana conferem o comprovante e dão a baixa.</p><button class="btn" onclick="closeModal()">Ok</button>`);
 }
 
 /* --- administrador --- */
 function renderAdmin() {
   const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
-  $('#app').innerHTML = `<div class="top"><h1><img src="icon-192.png" alt="" class="mini">Gestão · ${esc(S.user)}</h1><button onclick="logout()">Sair</button></div><div class="wrap">
+  $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">Painel de gestão</span><h1>${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
   ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
@@ -382,12 +389,12 @@ function tabRel() {
   const byDay = {}; os.forEach((o) => { const d = byDay[dayKey(o.createdAt)] ||= { n: 0, paid: 0, pend: 0 }; d.n++; o.status === 'paid' ? (d.paid += o.total) : (d.pend += o.total); });
   const prods = {}; os.forEach((o) => o.items.forEach((i) => { const p = prods[i.name] ||= { q: 0, v: 0 }; p.q += i.qty; p.v += i.qty * i.price; }));
   const top = Object.entries(prods).sort((a, b) => b[1].q - a[1].q), max = top[0]?.[1].q || 1;
-  $('#tab').innerHTML = `<select onchange="S.range=this.value;render()">${[['1', 'Hoje'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['all', 'Tudo']].map(([v, t]) => `<option value="${v}" ${r === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-    <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Total vendido</span><b>${money(sum(os))}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b style="color:var(--ok)">${money(sum(paid))}</b></div>
-    <div class="stat click" onclick="detail('areceber')"><span>A receber</span><b style="color:var(--warn)">${money(sum(pend))}</b></div><div class="stat click" onclick="detail('conferir')"><span>Pix informado, a conferir</span><b style="color:#1971c2">${money(sum(conf))}</b><span>${conf.length} pedido(s)</span></div><div class="stat click" onclick="detail('pedidos')"><span>Pedidos</span><b>${os.length}</b></div></div>
+  $('#tab').innerHTML = `<div class="toolbar">${rangeSelect()}</div>
+    <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Total vendido</span><b>${money(sum(os))}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b class="c-ok">${money(sum(paid))}</b></div>
+    <div class="stat click" onclick="detail('areceber')"><span>A receber</span><b class="c-warn">${money(sum(pend))}</b></div><div class="stat click" onclick="detail('conferir')"><span>Pix informado, a conferir</span><b class="c-info">${money(sum(conf))}</b><span>${conf.length} pedido(s)</span></div><div class="stat click" onclick="detail('pedidos')"><span>Pedidos</span><b>${os.length}</b></div></div>
     <div class="panel"><h3>Vendas por dia</h3><table><tr><th>Dia</th><th class="n">Pedidos</th><th class="n">Recebido</th><th class="n">A receber</th><th class="n">Total</th></tr>
     ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${d.n}</td><td class="n">${money(d.paid)}</td><td class="n">${money(d.pend)}</td><td class="n"><b>${money(d.paid + d.pend)}</b></td></tr>`).join('') || '<tr><td colspan=5>Sem vendas no período</td></tr>'}</table></div>
-    <div class="panel"><h3>Produtos mais vendidos</h3>${top.map(([n, p]) => `<div style="margin-bottom:10px"><div class="row" style="border:0;padding:0"><span>${esc(n)}</span><span>${p.q} un · ${money(p.v)}</span></div><div class="bar"><i style="width:${(p.q / max) * 100}%"></i></div></div>`).join('') || 'Sem dados'}</div>`;
+    <div class="panel"><h3>Produtos mais vendidos</h3>${top.map(([n, p]) => `<div class="tp"><div class="row plain"><span>${esc(n)}</span><small>${p.q} un · ${money(p.v)}</small></div><div class="bar"><i style="width:${(p.q / max) * 100}%"></i></div></div>`).join('') || '<p class="empty">Sem dados</p>'}</div>`;
 }
 function tabPrazo() {
   const pend = Store.data.orders.filter((o) => o.status !== 'paid' && o.status !== 'cancelled').sort((a, b) => a.createdAt - b.createdAt);
@@ -395,10 +402,10 @@ function tabPrazo() {
   // quem já avisou que pagou aparece primeiro: é só conferir o comprovante e dar baixa
   pend.slice().sort((a, b) => Number(aConferir(b)) - Number(aConferir(a)) || a.createdAt - b.createdAt).forEach((o) => (by[o.customer] ||= []).push(o));
   const aviso = conf.length ? `<div class="panel conf"><b>${conf.length} pedido(s) com Pix informado pelo cliente · ${money(conf.reduce((a, o) => a + o.total, 0))}</b><br><small>Confira o comprovante no extrato e clique em <b>Confirmar Pix</b> para dar a baixa. Se o Pix não caiu, clique em <b>Não caiu</b>: o pedido volta a ficar em aberto para o cliente.</small></div>` : '';
-  $('#tab').innerHTML = aviso + (Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row" style="border:0"><h3 style="margin:0">${esc(c)}</h3><b>${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
+  $('#tab').innerHTML = aviso + (Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row plain"><h3>${esc(c)}</h3><b class="c-gold">${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
     ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
-    <div style="text-align:right"><b>${money(o.total)}</b><br>${aConferir(o) ? `<button class="btn ok sm" onclick="markPaid('${o.id}')">Confirmar Pix</button> <button class="btn sec sm" onclick="naoCaiu('${o.id}')">Não caiu</button>` : `<button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button> <button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button>`}</div></div>`).join('')}
-    <br><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div>`).join('') : '<p>Nenhum pedido pendente 🎉</p>');
+    <div class="r"><b>${money(o.total)}</b><div class="acts col">${aConferir(o) ? `<button class="btn ok sm" onclick="markPaid('${o.id}')">Confirmar Pix</button><button class="btn sec sm" onclick="naoCaiu('${o.id}')">Não caiu</button>` : `<button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button><button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button>`}</div></div></div>`).join('')}
+    <div class="pfoot"><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div></div>`).join('') : '<p class="empty">Nenhum pedido pendente.</p>');
 }
 // Baixa final: registra quem conferiu e por onde o dinheiro entrou
 const baixa = (o) => ({ ...o, status: 'paid', paidAt: Date.now(), paidBy: S.user, paidWith: o.paidWith || (o.method === 'pix' ? 'pix' : o.method === 'maquininha' ? 'maquininha' : '') });
@@ -411,10 +418,10 @@ async function naoCaiu(id) {
 }
 
 function tabProd() {
-  const linha = (p) => `<div class="panel row" style="border:0">
-    <div style="display:flex;gap:10px;align-items:center">${p.photo ? `<img src="${p.photo}" width="56" height="56" style="object-fit:cover;border-radius:8px">` : '🍽️'}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br>${money(p.price)}${isTracked(p) ? ` · estoque ${availableTotal(p)}` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
-    <div style="display:flex;flex-direction:column;gap:6px"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`;
-  $('#tab').innerHTML = `<button class="btn" onclick="editProd()">+ Novo produto</button><br><br>${groupCats(Store.data.products).map(([c, ps]) => `<h3 class="cath">${esc(c)} <small>(${ps.length})</small></h3>${ps.map(linha).join('')}`).join('') || '<p>Nenhum produto ainda.</p>'}`;
+  const linha = (p) => `<div class="panel row">
+    <div class="pline">${p.photo ? `<img src="${p.photo}" class="thumb" alt="">` : `<div class="thumb ph">${ICON.dish}</div>`}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br><span class="c-gold">${money(p.price)}</span>${isTracked(p) ? `<small> · estoque ${availableTotal(p)}</small>` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
+    <div class="acts col"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`;
+  $('#tab').innerHTML = `<div class="toolbar"><button class="btn" onclick="editProd()">+ Novo produto</button></div>${groupCats(Store.data.products).map(([c, ps]) => `<h3 class="cath">${esc(c)} <small>(${ps.length})</small></h3>${ps.map(linha).join('')}`).join('') || '<p class="empty">Nenhum produto ainda.</p>'}`;
 }
 async function toggleProd(id) {
   const p = Store.data.products.find((x) => x.id === id);
@@ -425,18 +432,24 @@ let editPhoto = '';
 function editProd(id) {
   const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '' };
   editPhoto = p.photo || '';
+  const cat = (p.cat || '').trim();
   modal(`<h2>${id ? 'Editar' : 'Novo'} produto</h2>
-    <input id="pn" placeholder="Nome (ex.: X-Burguer)" value="${esc(p.name)}">
-    <label>Categoria (escolha ou digite uma nova)</label><input id="pcat" list="cats" placeholder="Ex.: Refeições, Lanches, Bebidas" value="${esc(p.cat || '')}" autocomplete="off"><datalist id="cats">${allCats().map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
-    <input id="pp" type="number" step="0.01" min="0" placeholder="Valor (R$)" value="${p.price}">
-    <input id="pc" type="number" step="0.01" min="0" placeholder="Custo unitário (R$): quanto custa fazer 1" value="${p.cost || ''}">
-    <input id="pf" placeholder="Sabores, separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
-    <label>Foto</label><input id="pimg" type="file" accept="image/*" capture="environment"><img id="prev" src="${editPhoto}" width="96" style="${editPhoto ? '' : 'display:none'};border-radius:8px;margin-bottom:10px">
-    <label><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''} style="width:auto"> Controlar estoque (só vende o que foi lançado como produção)</label><br>
-    <label><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''} style="width:auto"> Ativo (desmarque para pausar)</label><br><br>
-    <button class="btn" onclick="saveProd('${id || ''}')">Salvar</button>${id ? `<br><br><button class="btn del" onclick="delProd('${id}')">Excluir</button>` : ''}`);
+    <label class="lbl" for="pn">Nome</label><input id="pn" placeholder="Ex.: Filé ao molho madeira" value="${esc(p.name)}">
+    <label class="lbl" for="pcat">Categoria</label>
+    <div class="catpick" id="catpick">${allCats().map((c) => `<button type="button" class="${c === cat ? 'on' : ''}" onclick="setCat(this)">${esc(c)}</button>`).join('')}</div>
+    <input id="pcat" list="cats" placeholder="Ou digite uma nova categoria" value="${esc(cat)}" autocomplete="off" oninput="syncCat(this.value)"><datalist id="cats">${allCats().map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+    <div class="two"><div><label class="lbl" for="pp">Venda (R$)</label><input id="pp" type="number" step="0.01" min="0" placeholder="0,00" value="${p.price}"></div>
+    <div><label class="lbl" for="pc">Custo unitário (R$)</label><input id="pc" type="number" step="0.01" min="0" placeholder="Quanto custa fazer 1" value="${p.cost || ''}"></div></div>
+    <label class="lbl" for="pf">Sabores</label><input id="pf" placeholder="Separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
+    <label class="lbl" for="pimg">Foto</label><div class="photo"><input id="pimg" type="file" accept="image/*" capture="environment"><img id="prev" src="${editPhoto}" alt="" style="${editPhoto ? '' : 'display:none'}"></div>
+    <label class="chk"><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''}><span>Controlar estoque<small>Só vende o que foi lançado como produção</small></span></label>
+    <label class="chk"><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''}><span>Ativo<small>Desmarque para pausar no cardápio</small></span></label>
+    <div class="stack"><button class="btn" onclick="saveProd('${id || ''}')">Salvar</button>${id ? `<button class="btn del" onclick="delProd('${id}')">Excluir</button>` : ''}</div>`);
   $('#pimg').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; editPhoto = await shrink(f); $('#prev').src = editPhoto; $('#prev').style.display = ''; };
 }
+// Botões de categoria do formulário: só preenchem o campo #pcat (que continua sendo o que é salvo)
+function setCat(b) { $('#pcat').value = b.textContent; syncCat(b.textContent); }
+function syncCat(v) { document.querySelectorAll('#catpick button').forEach((b) => b.classList.toggle('on', b.textContent === String(v).trim())); }
 function shrink(file, max = 480) {
   return new Promise((res) => { const img = new Image(); img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = img.width * k; c.height = img.height * k; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.8)); }; img.src = URL.createObjectURL(file); });
 }
@@ -459,11 +472,11 @@ const stockMsg = (e) => String(e.message).replace('ESTOQUE:', '');
 
 function tabEst() {
   const items = stockItems(), log = Store.data.stockLog.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
-  $('#tab').innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="flex:1" onclick="prodDia()">+ Lançar produção do dia</button><button class="btn sec" style="flex:1" onclick="adjStock()">Perda / contagem</button></div><br>
+  $('#tab').innerHTML = `<div class="toolbar"><button class="btn" onclick="prodDia()">+ Lançar produção do dia</button><button class="btn sec" onclick="adjStock()">Perda / contagem</button></div>
     ${items.length ? projecao(items) : ''}
     ${items.length ? `<div class="panel"><h3>Estoque atual</h3><table><tr><th>Item</th><th class="n">Qtd</th><th class="n">Custo un.</th><th class="n">Valor</th></tr>
     ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n ${it.qty <= 0 ? 'low' : it.qty <= 5 ? 'warn' : ''}"><b>${it.qty}</b></td><td class="n">${it.p.cost ? money(it.p.cost) : '—'}</td><td class="n">${it.p.cost ? money(it.qty * it.p.cost) : '—'}</td></tr>`).join('')}</table></div>`
-      : '<p>Nenhum produto com estoque controlado. Em <b>Produtos → Editar</b>, marque "Controlar estoque".</p>'}
+      : '<div class="panel"><p class="lead" style="margin:0">Nenhum produto com estoque controlado. Em <b>Produtos → Editar</b>, marque "Controlar estoque".</p></div>'}
     <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
     ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
 }
@@ -473,14 +486,14 @@ const vendaItems = () => Store.data.products.filter((p) => p.active !== false).s
 function tabVenda() {
   const its = vendaItems();
   $('#tab').innerHTML = its.length ? `<div class="panel"><h3>Lançar venda feita por fora</h3>
-    <p><small>Digite a quantidade vendida de cada item. O estoque é baixado e a venda entra nos relatórios.</small></p>
+    <p class="lead"><small>Digite a quantidade vendida de cada item. O estoque é baixado e a venda entra nos relatórios.</small></p>
     ${its.map((it, i) => `<div class="row"><span>${itemName(it.p.name, it.flavor)}<br><small>${money(it.p.price)}${isTracked(it.p) ? ' · estoque ' + stockQty(it.p.id, it.flavor) : ''}</small></span>
-      <input class="vq" data-i="${i}" type="number" min="0" step="1" inputmode="numeric" placeholder="0" oninput="vTotal()" style="width:90px;margin:0"></div>`).join('')}
-    <p style="font-size:20px"><b>Total: <span id="vtot">${money(0)}</span></b></p>
-    <input id="vcli" placeholder="Nome do cliente (opcional)">
-    <select id="vpay"><option value="dinheiro">Recebido em dinheiro</option><option value="pix">Recebido por Pix</option><option value="cartao">Recebido no cartão</option><option value="receber">Ainda não recebi (fica em Pendentes)</option></select>
-    <input id="vdate" type="date" value="${today()}">
-    <button class="btn" onclick="saveVenda()">Registrar venda</button></div>` : '<p>Cadastre produtos primeiro.</p>';
+      <input class="vq qin" data-i="${i}" type="number" min="0" step="1" inputmode="numeric" placeholder="0" oninput="vTotal()" aria-label="Quantidade"></div>`).join('')}
+    <div class="total"><span>Total</span><b id="vtot">${money(0)}</b></div>
+    <label class="lbl" for="vcli">Cliente</label><input id="vcli" placeholder="Nome do cliente (opcional)">
+    <label class="lbl" for="vpay">Recebimento</label><select id="vpay"><option value="dinheiro">Recebido em dinheiro</option><option value="pix">Recebido por Pix</option><option value="cartao">Recebido no cartão</option><option value="receber">Ainda não recebi (fica em Pendentes)</option></select>
+    <label class="lbl" for="vdate">Data</label><input id="vdate" type="date" value="${today()}">
+    <button class="btn" onclick="saveVenda()">Registrar venda</button></div>` : '<p class="empty">Cadastre produtos primeiro.</p>';
 }
 function vTotal() {
   const its = vendaItems();
@@ -507,19 +520,19 @@ function projecao(items) {
   const total = recHoje + recPot, lucro = total - (custoHoje + custoPot), semCusto = items.some((it) => !it.p.cost);
   return `<div class="panel"><h3>Projeção do dia: se vender tudo</h3>
     <div class="cards"><div class="stat"><span>Já vendido hoje</span><b>${money(recHoje)}</b></div><div class="stat"><span>Estoque a preço de venda</span><b>${money(recPot)}</b></div>
-    <div class="stat"><span>Faturamento possível do dia</span><b style="color:var(--ok)">${money(total)}</b></div>
+    <div class="stat"><span>Faturamento possível do dia</span><b class="c-ok">${money(total)}</b></div>
     <div class="stat"><span>Lucro bruto estimado</span><b>${semCusto ? '—' : money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : total ? ((lucro / total) * 100).toFixed(0) + '% de margem' : ''}</span></div></div>
     <table><tr><th>Item</th><th class="n">Qtd</th><th class="n">Preço</th><th class="n">Rende</th><th class="n">Lucro</th></tr>
     ${items.map((it) => `<tr><td>${itemName(it.p.name, it.flavor)}</td><td class="n">${it.qty}</td><td class="n">${money(it.p.price)}</td><td class="n">${money(it.qty * it.p.price)}</td><td class="n">${it.p.cost ? money(it.qty * (it.p.price - it.p.cost)) : '—'}</td></tr>`).join('')}
     <tr><td><b>Total do estoque</b></td><td class="n"><b>${items.reduce((a, it) => a + it.qty, 0)}</b></td><td></td><td class="n"><b>${money(recPot)}</b></td><td class="n"><b>${semCusto ? '—' : money(recPot - custoPot)}</b></td></tr></table>
-    <p><small>Considera o estoque de agora vendido por inteiro ao preço do cardápio, mais o que já foi vendido hoje. O lucro usa o custo unitário de cada produto.</small></p></div>`;
+    <p class="hint">Considera o estoque de agora vendido por inteiro ao preço do cardápio, mais o que já foi vendido hoje. O lucro usa o custo unitário de cada produto.</p></div>`;
 }
 function prodDia() {
   const items = stockItems();
   if (!items.length) return toast('Marque "Controlar estoque" nos produtos primeiro');
-  modal(`<h2>Produção do dia</h2><input id="pdate" type="date" value="${today()}"><p><small>Digite quanto foi produzido de cada item. Deixe em branco o que não produziu.</small></p>
-    ${items.map((it, i) => `<div class="row"><span>${itemName(it.p.name, it.flavor)}<br><small>no estoque: ${it.qty}</small></span><input class="pq" data-i="${i}" type="number" min="0" step="1" inputmode="numeric" placeholder="0" style="width:90px;margin:0"></div>`).join('')}
-    <br><button class="btn" onclick="saveProdDia()">Salvar produção</button>`);
+  modal(`<h2>Produção do dia</h2><label class="lbl" for="pdate">Data</label><input id="pdate" type="date" value="${today()}"><p class="lead"><small>Digite quanto foi produzido de cada item. Deixe em branco o que não produziu.</small></p>
+    ${items.map((it, i) => `<div class="row"><span>${itemName(it.p.name, it.flavor)}<br><small>no estoque: ${it.qty}</small></span><input class="pq qin" data-i="${i}" type="number" min="0" step="1" inputmode="numeric" placeholder="0" aria-label="Quantidade"></div>`).join('')}
+    <div class="stack"><button class="btn" onclick="saveProdDia()">Salvar produção</button></div>`);
 }
 async function saveProdDia() {
   const items = stockItems(), date = $('#pdate').value || today();
@@ -534,8 +547,8 @@ function adjStock() {
   const items = stockItems();
   if (!items.length) return toast('Marque "Controlar estoque" nos produtos primeiro');
   modal(`<h2>Perda ou contagem</h2>
-    <select id="asel">${items.map((it, i) => `<option value="${i}">${esc(it.p.name)}${it.flavor ? ' (' + esc(it.flavor) + ')' : ''} — estoque ${it.qty}</option>`).join('')}</select>
-    <select id="amode"><option value="perda">Perda / desperdício (tira do estoque)</option><option value="contagem">Contagem (informo quanto tem agora)</option></select>
+    <label class="lbl" for="asel">Item</label><select id="asel">${items.map((it, i) => `<option value="${i}">${esc(it.p.name)}${it.flavor ? ' (' + esc(it.flavor) + ')' : ''} — estoque ${it.qty}</option>`).join('')}</select>
+    <label class="lbl" for="amode">Tipo</label><select id="amode"><option value="perda">Perda / desperdício (tira do estoque)</option><option value="contagem">Contagem (informo quanto tem agora)</option></select>
     <input id="aqty" type="number" min="0" step="1" inputmode="numeric" placeholder="Quantidade">
     <input id="anote" placeholder="Observação (opcional)"><button class="btn" onclick="saveAdj()">Salvar</button>`);
 }
@@ -555,19 +568,19 @@ function tabCmp() {
   const fromD = dayKey(rangeFrom()), cs = Store.data.purchases.filter((c) => c.date >= fromD).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
   const total = cs.reduce((a, c) => a + Number(c.value), 0), cat = {};
   cs.forEach((c) => (cat[c.category] = (cat[c.category] || 0) + Number(c.value)));
-  $('#tab').innerHTML = `${rangeSelect()}<button class="btn" onclick="editCompra()">+ Lançar compra</button><br><br>
-    <div class="cards"><div class="stat click" onclick="detail('compras')"><span>Total gasto</span><b>${money(total)}</b></div>${Object.entries(cat).map(([k, v]) => `<div class="stat click" onclick="detail('compras','${k}')"><span>${esc(k)}</span><b style="font-size:18px">${money(v)}</b></div>`).join('')}</div>
+  $('#tab').innerHTML = `<div class="toolbar">${rangeSelect()}<button class="btn" onclick="editCompra()">+ Lançar compra</button></div>
+    <div class="cards"><div class="stat click" onclick="detail('compras')"><span>Total gasto</span><b>${money(total)}</b></div>${Object.entries(cat).map(([k, v]) => `<div class="stat click" onclick="detail('compras','${k}')"><span>${esc(k)}</span><b>${money(v)}</b></div>`).join('')}</div>
     <div class="panel"><h3>Compras</h3><table><tr><th>Data</th><th>Descrição</th><th class="n">Valor</th><th></th></tr>
     ${cs.map((c) => `<tr><td>${dayLabel(c.date)}</td><td>${esc(c.description)}<br><small>${esc(c.category)}${c.supplier ? ' · ' + esc(c.supplier) : ''}</small></td><td class="n">${money(c.value)}</td><td class="n"><button class="btn sec sm" onclick="editCompra('${c.id}')">Editar</button></td></tr>`).join('') || '<tr><td colspan=4>Nenhuma compra no período</td></tr>'}</table></div>`;
 }
 function editCompra(id) {
   const c = Store.data.purchases.find((x) => x.id === id) || { date: today(), description: '', category: CATS[0], supplier: '', value: '' };
-  modal(`<h2>${id ? 'Editar' : 'Lançar'} compra</h2><input id="cdate" type="date" value="${c.date}">
-    <input id="cdesc" placeholder="O que comprou (ex.: 10 kg de frango)" value="${esc(c.description)}">
+  modal(`<h2>${id ? 'Editar' : 'Lançar'} compra</h2><label class="lbl" for="cdate">Data</label><input id="cdate" type="date" value="${c.date}">
+    <label class="lbl" for="cdesc">Compra</label><input id="cdesc" placeholder="O que comprou (ex.: 10 kg de frango)" value="${esc(c.description)}">
     <select id="ccat">${CATS.map((k) => `<option ${k === c.category ? 'selected' : ''}>${k}</option>`).join('')}</select>
     <input id="csup" placeholder="Fornecedor / mercado (opcional)" value="${esc(c.supplier)}">
     <input id="cval" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Valor total gasto (R$)" value="${c.value}">
-    <button class="btn" onclick="saveCompra('${id || ''}')">Salvar</button>${id ? `<br><br><button class="btn del" onclick="delCompra('${id}')">Excluir</button>` : ''}`);
+    <div class="stack"><button class="btn" onclick="saveCompra('${id || ''}')">Salvar</button>${id ? `<button class="btn del" onclick="delCompra('${id}')">Excluir</button>` : ''}</div>`);
 }
 async function saveCompra(id) {
   const description = $('#cdesc').value.trim(), value = parseFloat($('#cval').value), date = $('#cdate').value;
@@ -595,19 +608,19 @@ function tabRes() {
   const perdas = Store.data.stockLog.filter((l) => l.type === 'perda' && l.date >= fromD).reduce((a, l) => a + Math.abs(l.qty) * (Store.data.products.find((p) => p.id === l.productId)?.cost || 0), 0);
   const parado = stockItems().reduce((a, it) => a + it.qty * (it.p.cost || 0), 0);
   const lucro = vendas - cmv, caixa = recebido - compras, pct = vendas ? (lucro / vendas) * 100 : 0;
-  const cor = (v) => (v >= 0 ? 'var(--ok)' : '#c92a2a');
-  $('#tab').innerHTML = `${rangeSelect()}
-    <div class="panel"><b>${vendas || compras ? (caixa >= 0 ? 'No período entrou mais dinheiro do que saiu.' : 'No período saiu mais dinheiro do que entrou.') : 'Sem movimento no período.'}</b>
+  const cor = (v) => (v >= 0 ? 'c-ok' : 'c-bad');
+  $('#tab').innerHTML = `<div class="toolbar">${rangeSelect()}</div>
+    <div class="panel note"><b>${vendas || compras ? (caixa >= 0 ? 'No período entrou mais dinheiro do que saiu.' : 'No período saiu mais dinheiro do que entrou.') : 'Sem movimento no período.'}</b>
     <br><small>Caixa = o que já recebeu − o que gastou em compras. Se você comprou muito insumo que ainda não virou venda, o caixa fica baixo mesmo com lucro.</small></div>
-    <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Vendido</span><b>${money(vendas)}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b>${money(recebido)}</b></div><div class="stat click" onclick="detail('areceber')"><span>A receber</span><b style="color:var(--warn)">${money(areceber)}</b></div>
-    <div class="stat click" onclick="detail('compras')"><span>Gasto em compras</span><b>${money(compras)}</b></div><div class="stat click" onclick="detail('caixa')"><span>Caixa (recebido − compras)</span><b style="color:${cor(caixa)}">${money(caixa)}</b></div>
-    <div class="stat click" onclick="detail('lucro')"><span>Lucro estimado</span><b style="color:${cor(lucro)}">${money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : pct.toFixed(0) + '% de margem'}</span></div>
+    <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Vendido</span><b>${money(vendas)}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b>${money(recebido)}</b></div><div class="stat click" onclick="detail('areceber')"><span>A receber</span><b class="c-warn">${money(areceber)}</b></div>
+    <div class="stat click" onclick="detail('compras')"><span>Gasto em compras</span><b>${money(compras)}</b></div><div class="stat click" onclick="detail('caixa')"><span>Caixa (recebido − compras)</span><b class="${cor(caixa)}">${money(caixa)}</b></div>
+    <div class="stat click" onclick="detail('lucro')"><span>Lucro estimado</span><b class="${cor(lucro)}">${money(lucro)}</b><span>${semCusto ? 'faltam custos nos produtos' : pct.toFixed(0) + '% de margem'}</span></div>
     <div class="stat click" onclick="detail('perdas')"><span>Perdas (a custo)</span><b>${money(perdas)}</b></div><div class="stat click" onclick="detail('parado')"><span>Estoque guardado (a custo)</span><b>${money(parado)}</b></div></div>
     ${semCusto ? '<div class="panel"><small>Para ver o lucro certo, informe o <b>custo unitário</b> (quanto custa fazer 1 unidade) em Produtos → Editar.</small></div>' : ''}
     <div class="panel"><h3>Lucro por produto</h3><table><tr><th>Produto</th><th class="n">Qtd</th><th class="n">Vendido</th><th class="n">Lucro</th><th class="n">Margem</th></tr>
     ${Object.entries(byProd).sort((a, b) => b[1].rev - a[1].rev).map(([n, r]) => `<tr><td>${esc(n)}</td><td class="n">${r.q}</td><td class="n">${money(r.rev)}</td><td class="n">${r.cost ? money(r.rev - r.cost) : '—'}</td><td class="n">${r.cost ? ((1 - r.cost / r.rev) * 100).toFixed(0) + '%' : '—'}</td></tr>`).join('') || '<tr><td colspan=5>Sem vendas</td></tr>'}</table></div>
     <div class="panel"><h3>Dia a dia</h3><table><tr><th>Dia</th><th class="n">Vendas</th><th class="n">Compras</th><th class="n">Saldo</th></tr>
-    ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n" style="color:${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
+    ${Object.entries(byDay).sort().reverse().map(([k, d]) => `<tr><td>${dayLabel(k)}</td><td class="n">${money(d.v)}</td><td class="n">${money(d.c)}</td><td class="n ${cor(d.v - d.c)}"><b>${money(d.v - d.c)}</b></td></tr>`).join('') || '<tr><td colspan=4>Sem movimento</td></tr>'}</table></div>`;
 }
 /* Detalhe dos cartões: abre os registros que formam cada valor, no período escolhido */
 const ordLabel = (o) => (o.status === 'paid' ? 'Pago' + (o.method === 'balcao' ? ' · balcão' : '') + ({ pix: ' (Pix)', credit_card: ' (cartão)', maquininha: ' (maquininha)', cartao: ' (cartão)', dinheiro: ' (dinheiro)' }[o.paidWith] || '') : aConferir(o) ? 'Pix informado · conferir' : o.method === 'pix' ? 'Pix aguardando' : o.method === 'infinitepay' ? 'Pagamento online não confirmado' : o.method === 'maquininha' ? 'Cartão físico (maquininha)' : o.method === 'balcao' ? 'A receber (balcão)' : 'A prazo');
@@ -626,7 +639,7 @@ function detail(kind, cat) {
   const allC = Store.data.purchases.filter((c) => c.date >= fromD), cps = allC.filter((c) => !cat || c.category === cat);
   const tot = (cs) => cs.reduce((a, c) => a + Number(c.value), 0);
   const costOf = (i) => i.cost || Store.data.products.find((p) => p.id === i.productId)?.cost || 0;
-  const head = (t, v, sub) => `<h2>${t}</h2><p><small>${per}${sub ? ' · ' + sub : ''}</small></p><p style="font-size:22px;margin:0 0 8px"><b>${v}</b></p>`;
+  const head = (t, v, sub) => `<h2>${t}</h2><p class="lead"><small>${per}${sub ? ' · ' + sub : ''}</small></p><p class="big">${v}</p>`;
   const paid = os.filter((o) => o.status === 'paid'), pend = os.filter((o) => o.status !== 'paid');
   let h = '';
   if (kind === 'vendido') h = head('Total vendido', money(sum(os)), os.length + ' pedido(s)') + ordRows(os);
@@ -652,7 +665,7 @@ function detail(kind, cat) {
     h = head('Estoque guardado (a custo)', money(its.reduce((a, it) => a + it.qty * (it.p.cost || 0), 0)), 'agora') +
       (its.map((it) => `<div class="row"><div>${itemName(it.p.name, it.flavor)}<br><small>${it.qty} un × ${it.p.cost ? money(it.p.cost) : 'sem custo'}</small></div><b>${money(it.qty * (it.p.cost || 0))}</b></div>`).join('') || '<p>Nenhum item com estoque controlado.</p>');
   }
-  modal(h + '<br><button class="btn sec" onclick="closeModal()">Fechar</button>');
+  modal(h + '<div class="stack"><button class="btn sec" onclick="closeModal()">Fechar</button></div>');
 }
 async function cancelOrd(id) {
   const o = Store.data.orders.find((x) => x.id === id);
@@ -663,15 +676,16 @@ async function cancelOrd(id) {
 function tabQr() {
   const url = location.origin + location.pathname;
   let img = ''; try { const q = qrcode(0, 'M'); q.addData(url); q.make(); img = q.createImgTag(10, 12); } catch (e) {}
-  $('#tab').innerHTML = `<div class="panel" style="text-align:center"><h3>QR code do cardápio</h3><div>${img}</div><p><b>${esc(url)}</b></p>
-    <p><small>Imprima e coloque na lanchonete. O cliente aponta a câmera do celular, digita o nome e faz o pedido.</small></p>
-    <button class="btn sm" onclick="window.print()">Imprimir</button></div>`;
+  $('#tab').innerHTML = `<div class="panel center"><h3>QR code do cardápio</h3><div class="qrwrap">${img}</div><p><b>${esc(url)}</b></p>
+    <p class="hint">Imprima e coloque na mesa. O cliente aponta a câmera do celular, digita o nome e faz o pedido.</p>
+    <div class="stack"><button class="btn sm" onclick="window.print()">Imprimir</button></div></div>`;
 }
 function tabCfg() {
   const s = Store.data.settings;
-  $('#tab').innerHTML = `<div class="panel"><h3>Pix para recebimento</h3><p><small>O Pix copia e cola é gerado com o valor do pedido. Informe a chave Pix da conta que vai receber (pode ser a conta da InfinitePay).</small></p>
-    <input id="k" placeholder="Chave Pix (CPF/CNPJ, e-mail, celular ou aleatória)" value="${esc(s.pixKey)}">
-    <input id="n" placeholder="Nome do recebedor" value="${esc(s.pixName)}"><input id="c" placeholder="Cidade" value="${esc(s.pixCity)}">
+  $('#tab').innerHTML = `<div class="panel"><h3>Pix para recebimento</h3><p class="lead"><small>O Pix copia e cola é gerado com o valor do pedido. Informe a chave Pix da conta que vai receber (pode ser a conta da InfinitePay).</small></p>
+    <label class="lbl" for="k">Chave Pix</label><input id="k" placeholder="CPF/CNPJ, e-mail, celular ou aleatória" value="${esc(s.pixKey)}">
+    <label class="lbl" for="n">Nome do recebedor</label><input id="n" placeholder="Nome do recebedor" value="${esc(s.pixName)}">
+    <label class="lbl" for="c">Cidade</label><input id="c" placeholder="Cidade" value="${esc(s.pixCity)}">
     <button class="btn" onclick="saveCfg()">Salvar</button></div>`;
 }
 async function saveCfg() { await Store.setSettings({ pixKey: $('#k').value.trim(), pixName: $('#n').value.trim(), pixCity: $('#c').value.trim() }); toast('Salvo'); }
@@ -694,7 +708,7 @@ async function handleReturn() {
     if (j.paid && j.amount === Math.round(o.total * 100)) {
       await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now(), paidWith: q.get('capture_method') || j.capture_method || '', receiptUrl: q.get('receipt_url') || '' });
       localStorage.removeItem('lanche-pagando');
-      modal(`<h2>Pagamento confirmado ✅</h2><p>Pedido de <b>${money(o.total)}</b> pago. Obrigado!</p>${q.get('receipt_url') ? `<p><a href="${esc(q.get('receipt_url'))}" target="_blank" rel="noopener">Ver comprovante</a></p>` : ''}<button class="btn" onclick="closeModal()">Ok</button>`);
+      modal(`<h2>${ICON.check} Pagamento confirmado</h2><p>Pedido de <b>${money(o.total)}</b> pago. Obrigado!</p>${q.get('receipt_url') ? `<p><a href="${esc(q.get('receipt_url'))}" target="_blank" rel="noopener">Ver comprovante</a></p>` : ''}<button class="btn" onclick="closeModal()">Ok</button>`);
     } else modal('<h2>Pagamento ainda não confirmado</h2><p>O pedido ficou anotado como pendente. Se você já pagou, avise o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>');
   } catch (e) { modal('<h2>Não consegui confirmar agora</h2><p>O pedido ficou anotado como pendente. Se você já pagou, avise o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>'); }
 }
