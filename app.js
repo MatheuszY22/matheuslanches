@@ -7,6 +7,7 @@ const ADMINS = {
 const LS = 'lanchonete-v1';
 const IP_HANDLE = 'matheus-tributino'; // InfiniteTag (InfinitePay), sem o $
 const IP_API = 'https://api.checkout.infinitepay.io';
+const IP_WEBHOOK = 'https://lm-lanches-webhook.lm-lanches-webhook.workers.dev'; // recebedor (Cloudflare): baixa o pedido mesmo se o cliente não voltar ao site
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -300,7 +301,7 @@ async function checkout(method) {
     $('#modal .box').innerHTML = '<h2>Abrindo o pagamento…</h2><p>Aguarde um instante.</p>';
     try {
       const r = await fetch(IP_API + '/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        handle: IP_HANDLE, order_nsu: order.id, redirect_url: location.origin + location.pathname,
+        handle: IP_HANDLE, order_nsu: order.id, redirect_url: location.origin + location.pathname, webhook_url: IP_WEBHOOK,
         items: order.items.map((i) => ({ quantity: i.qty, price: Math.round(i.price * 100), description: i.name + (i.flavor ? ' (' + i.flavor + ')' : '') })),
         customer: { name: order.customer, email: contato()?.email, phone_number: '+55' + soDigitos(contato()?.phone) } }) });
       const j = await r.json().catch(() => ({}));
