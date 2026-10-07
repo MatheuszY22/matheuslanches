@@ -294,6 +294,11 @@ function stockFail(e) {
 async function checkout(method) {
   const st = Store.data.settings;
   if (method === 'pix' && !st.pixKey) return toast('Pix ainda não configurado pelo Matheus');
+  if (method === 'infinitepay' || method === 'pix') { // um pagamento online por vez: não duplica o pedido
+    await checkOpen();
+    const aberto = pedidoAbertoOnline();
+    if (aberto) return avisoDuplicado(aberto, method);
+  }
   const paused = S.cart.filter((i) => Store.data.products.find((p) => p.id === i.productId)?.active === false);
   if (paused.length) { S.cart = S.cart.filter((i) => !paused.includes(i)); render(); closeModal(); return toast(paused.map((i) => i.name).join(', ') + ' acabou e saiu do pedido'); }
   const order = { id: uid(), customer: S.user, items: S.cart.map((i) => ({ ...i })), total: cartTotal(), status: 'pending', method, createdAt: Date.now(), paidAt: null };
@@ -311,6 +316,7 @@ async function checkout(method) {
     order.method = 'infinitepay';
     try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
     S.cart = []; localStorage.setItem('lanche-pagando', order.id);
+    saveOpen(openIds().concat(order.id)); // fica em aberto neste aparelho até confirmar: se o pagamento falhar, o cliente retoma sem refazer
     location.href = order.payUrl; return;
   }
   try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
@@ -342,10 +348,40 @@ async function checkOpen() {
   saveOpen(os.map((o) => o.id)); S.openOrders = os;
   if (S.user && !S.admin && $('#modal').classList.contains('hidden')) renderMenu();
 }
-const openBanner = () => S.openOrders.map((o) => o.clientPaid
-  ? `<div class="aberto ok"><div><b>Pix informado · ${money(o.total)}</b><br><small>${itemsText(o)} · o Matheus confere o comprovante e dá a baixa</small></div></div>`
+const openBanner = () => S.openOrders.map((o) => o.method === 'infinitepay'
+  ? `<div class="aberto"><div><b>Pagamento não concluído · ${money(o.total)}</b><br><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · ${itemsText(o)}</small></div>
+    <div class="acts"><button class="btn sm" onclick="continuar('${o.id}')">Continuar o pagamento</button><button class="btn sec sm" onclick="cancelOpen('${o.id}')">Cancelar pedido</button></div></div>`
+  : o.clientPaid
+  ?`<div class="aberto ok"><div><b>Pix informado · ${money(o.total)}</b><br><small>${itemsText(o)} · o Matheus confere o comprovante e dá a baixa</small></div></div>`
   : `<div class="aberto"><div><b>Pedido em aberto · ${money(o.total)}</b><br><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · ${itemsText(o)}</small></div>
     <div class="acts"><button class="btn sm" onclick="pixModal('${o.id}')">Pagar com Pix</button><button class="btn ok sm" onclick="clientePagou('${o.id}')">Já paguei</button></div></div>`).join('');
+// Retoma o pagamento de um pedido em aberto (mesmo link da InfinitePay, ou o Pix) em vez de criar outro pedido
+function continuar(id) {
+  const o = S.openOrders.find((x) => x.id === id);
+  if (!o) return;
+  if (o.method === 'infinitepay' && o.payUrl) { location.href = o.payUrl; return; }
+  closeModal(); pixModal(o);
+}
+async function cancelOpen(id, depois) {
+  const o = S.openOrders.find((x) => x.id === id);
+  if (!o) return;
+  if (!depois && !confirm('Cancelar este pedido? Se você já pagou, não cancele: fale com o Matheus.')) return;
+  try { await Store.cancelOrder(o, 'cliente'); } catch (e) { if (e.message !== 'MUDOU') return toast('Não foi possível cancelar. Tente de novo.'); toast('Esse pedido já foi pago ou alterado.'); }
+  saveOpen(openIds().filter((x) => x !== id)); S.openOrders = S.openOrders.filter((x) => x.id !== id);
+  if (!depois) { render(); toast('Pedido cancelado'); }
+}
+// Antes de abrir um novo pagamento online, olha se já existe um em aberto: evita pedido duplicado
+function pedidoAbertoOnline() { return S.openOrders.find((x) => (x.method === 'infinitepay' || x.method === 'pix') && !x.clientPaid); }
+function avisoDuplicado(o, method) {
+  modal(`<h2>Você já tem um pedido aguardando pagamento</h2><p class="lead">${itemsText(o)} · <b>${money(o.total)}</b></p>
+    <p class="hint">Para não duplicar, conclua esse pedido. Só cancele se quiser trocar o que pediu.</p>
+    <div class="stack"><button class="btn" onclick="continuar('${o.id}')">Continuar esse pagamento</button>
+    <button class="btn sec" onclick="cancelarETrocar('${o.id}','${method}')">Cancelar esse e fazer o pedido novo</button></div>`);
+}
+async function cancelarETrocar(id, method) {
+  if (!confirm('Cancelar o pedido anterior? Se você já pagou, não cancele: fale com o Matheus.')) return;
+  await cancelOpen(id, true); openCart(); checkout(method);
+}
 function pixModal(x) {
   const o = typeof x === 'string' ? S.openOrders.find((y) => y.id === x) : x, st = Store.data.settings;
   if (!o) return;
@@ -398,11 +434,14 @@ function tabRel() {
 function tabPrazo() {
   const pend = Store.data.orders.filter((o) => o.status !== 'paid' && o.status !== 'cancelled').sort((a, b) => a.createdAt - b.createdAt);
   const conf = pend.filter(aConferir), by = {};
+  // mesmo cliente, mesmos itens, em menos de 30 minutos: provável pedido duplicado (pagamento que falhou e foi refeito)
+  const sig = (o) => nameKey(o.customer) + '|' + o.items.map((i) => i.productId + ':' + i.flavor + ':' + i.qty).sort().join(',');
+  const dup = new Set(); pend.forEach((a) => pend.forEach((b) => { if (a.id !== b.id && sig(a) === sig(b) && Math.abs(a.createdAt - b.createdAt) < 30 * 60000) dup.add(a.id); }));
   // quem já avisou que pagou aparece primeiro: é só conferir o comprovante e dar baixa
   pend.slice().sort((a, b) => Number(aConferir(b)) - Number(aConferir(a)) || a.createdAt - b.createdAt).forEach((o) => (by[o.customer] ||= []).push(o));
   const aviso = conf.length ? `<div class="panel conf"><b>${conf.length} pedido(s) com Pix informado pelo cliente · ${money(conf.reduce((a, o) => a + o.total, 0))}</b><br><small>Confira o comprovante no extrato e clique em <b>Confirmar Pix</b> para dar a baixa. Se o Pix não caiu, clique em <b>Não caiu</b>: o pedido volta a ficar em aberto para o cliente.</small></div>` : '';
   $('#tab').innerHTML = aviso + (Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row plain"><h3>${esc(c)}</h3><b class="c-gold">${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
-    ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span></small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
+    ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span>${dup.has(o.id) ? ' <span class="tag dup">possível duplicado</span>' : ''}</small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
     <div class="r"><b>${money(o.total)}</b><div class="acts col">${aConferir(o) ? `<button class="btn ok sm" onclick="markPaid('${o.id}')">Confirmar Pix</button><button class="btn sec sm" onclick="naoCaiu('${o.id}')">Não caiu</button>` : `<button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button><button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button>`}</div></div></div>`).join('')}
     <div class="pfoot"><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div></div>`).join('') : '<p class="empty">Nenhum pedido pendente.</p>');
 }
@@ -737,6 +776,7 @@ async function handleReturn() {
     if (j.paid && j.amount === Math.round(o.total * 100)) {
       await Store.put('orders', { ...o, status: 'paid', paidAt: Date.now(), paidWith: q.get('capture_method') || j.capture_method || '', receiptUrl: q.get('receipt_url') || '' });
       localStorage.removeItem('lanche-pagando');
+      saveOpen(openIds().filter((x) => x !== id)); S.openOrders = S.openOrders.filter((x) => x.id !== id);
       modal(`<h2>${ICON.check} Pagamento confirmado</h2><p>Pedido de <b>${money(o.total)}</b> pago. Obrigado!</p>${q.get('receipt_url') ? `<p><a href="${esc(q.get('receipt_url'))}" target="_blank" rel="noopener">Ver comprovante</a></p>` : ''}<button class="btn" onclick="closeModal()">Ok</button>`);
     } else modal('<h2>Pagamento ainda não confirmado</h2><p>O pedido ficou anotado como pendente. Se você já pagou, avise o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>');
   } catch (e) { modal('<h2>Não consegui confirmar agora</h2><p>O pedido ficou anotado como pendente. Se você já pagou, avise o Matheus.</p><button class="btn" onclick="closeModal()">Ok</button>'); }
@@ -747,3 +787,5 @@ render();
 handleReturn();
 checkOpen();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkOpen(); });
+addEventListener('pageshow', (e) => { if (e.persisted) checkOpen(); }); // voltou com o botão "voltar" do navegador
+setInterval(() => { if (S.openOrders.length && document.visibilityState === 'visible') checkOpen(); }, 15000); // some o aviso quando a baixa chega

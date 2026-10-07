@@ -210,3 +210,4 @@ small.sub{display:inline-block;margin-top:4px}small.sub.conf{color:var(--ok);fon
 @media print{
   body{background:#fff;color:#000}.top,.tabs,.btn{display:none}.panel{border:0;color:#000}.panel h3,.panel b{color:#000}
 }
+.tag.dup{background:#fde8e8;color:#a61e1e}
