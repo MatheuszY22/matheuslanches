@@ -436,12 +436,14 @@ function tabPrazo() {
   const conf = pend.filter(aConferir), by = {};
   // mesmo cliente, mesmos itens, em menos de 30 minutos: provável pedido duplicado (pagamento que falhou e foi refeito)
   const sig = (o) => nameKey(o.customer) + '|' + o.items.map((i) => i.productId + ':' + i.flavor + ':' + i.qty).sort().join(',');
-  const dup = new Set(); pend.forEach((a) => pend.forEach((b) => { if (a.id !== b.id && sig(a) === sig(b) && Math.abs(a.createdAt - b.createdAt) < 30 * 60000) dup.add(a.id); }));
+  // compara com todos os pedidos não cancelados: o caso mais comum é o pendente que ficou para trás e o refeito que foi pago
+  const vivos = Store.data.orders.filter((o) => o.status !== 'cancelled'), dup = new Map();
+  pend.forEach((a) => { const b = vivos.find((x) => x.id !== a.id && sig(x) === sig(a) && Math.abs(x.createdAt - a.createdAt) < 30 * 60000); if (b) dup.set(a.id, b.status === 'paid'); });
   // quem já avisou que pagou aparece primeiro: é só conferir o comprovante e dar baixa
   pend.slice().sort((a, b) => Number(aConferir(b)) - Number(aConferir(a)) || a.createdAt - b.createdAt).forEach((o) => (by[o.customer] ||= []).push(o));
   const aviso = conf.length ? `<div class="panel conf"><b>${conf.length} pedido(s) com Pix informado pelo cliente · ${money(conf.reduce((a, o) => a + o.total, 0))}</b><br><small>Confira o comprovante no extrato e clique em <b>Confirmar Pix</b> para dar a baixa. Se o Pix não caiu, clique em <b>Não caiu</b>: o pedido volta a ficar em aberto para o cliente.</small></div>` : '';
   $('#tab').innerHTML = aviso + (Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row plain"><h3>${esc(c)}</h3><b class="c-gold">${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
-    ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span>${dup.has(o.id) ? ' <span class="tag dup">possível duplicado</span>' : ''}</small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
+    ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span>${dup.has(o.id) ? ` <span class="tag dup">${dup.get(o.id) ? 'duplicado: já existe um igual pago' : 'possível duplicado'}</span>` : ''}</small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
     <div class="r"><b>${money(o.total)}</b><div class="acts col">${aConferir(o) ? `<button class="btn ok sm" onclick="markPaid('${o.id}')">Confirmar Pix</button><button class="btn sec sm" onclick="naoCaiu('${o.id}')">Não caiu</button>` : `<button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button><button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button>`}</div></div></div>`).join('')}
     <div class="pfoot"><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div></div>`).join('') : '<p class="empty">Nenhum pedido pendente.</p>');
 }
