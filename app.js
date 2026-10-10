@@ -143,7 +143,7 @@ const nameKey = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').
 const readSess = () => { try { return JSON.parse(localStorage.getItem('lanche-sess')); } catch (e) { return null; } };
 const ADMIN_KEY = ADMINS[sessionStorage.getItem('lanche-admin')] ? sessionStorage.getItem('lanche-admin') : '';
 const IS_ADMIN = !!ADMIN_KEY;
-const S = { user: IS_ADMIN ? ADMINS[ADMIN_KEY].name : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null, openOrders: [], enc: { data: '', hora: '', obs: '' } };
+const S = { user: IS_ADMIN ? ADMINS[ADMIN_KEY].name : readSess()?.name || '', profile: IS_ADMIN ? null : readSess(), admin: IS_ADMIN, tab: 'rel', range: '7', cart: [], askPass: false, step: 'nome', pending: null, openOrders: [], enc: { data: '', obs: '' } };
 
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.remove('hidden'); setTimeout(() => t.classList.add('hidden'), 2200); }
 function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="box">${html}</div>`; m.classList.remove('hidden'); m.onclick = (e) => { if (e.target === m) closeModal(); }; }
@@ -264,10 +264,9 @@ function addCart(p, flavor) {
 const minEncData = () => dayKey(Date.now() + ENC_MIN_DIAS * 86400000);
 const encBox = () => (S.cart[0]?.enc ? `<div class="encbox"><h3>Dados da encomenda</h3>
   <label class="lbl" for="edata">Data de retirada</label><input id="edata" type="date" min="${minEncData()}" value="${S.enc.data}" onchange="S.enc.data=this.value">
-  <label class="lbl" for="ehora">Horário</label><input id="ehora" type="time" value="${S.enc.hora}" onchange="S.enc.hora=this.value">
   <label class="lbl" for="eobs">Observações (opcional)</label><input id="eobs" placeholder="Ex.: sem cebola, escrever parabéns" value="${esc(S.enc.obs)}" oninput="S.enc.obs=this.value">
-  <p class="hint">Antecedência mínima: ${ENC_MIN_DIAS} dia(s).</p></div>` : '');
-const limpaCarrinho = () => { S.cart = []; S.enc = { data: '', hora: '', obs: '' }; };
+  <p class="hint">Antecedência mínima: ${ENC_MIN_DIAS} dia(s). <b>A encomenda só é feita depois que o pagamento for confirmado.</b></p></div>` : '');
+const limpaCarrinho = () => { S.cart = []; S.enc = { data: '', obs: '' }; };
 function openCart() {
   if (!S.cart.length) return closeModal();
   modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div><span class="nm">${esc(i.name)}</span>${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
@@ -275,7 +274,7 @@ function openCart() {
     ${encBox()}<div class="total"><span>Total</span><b>${money(cartTotal())}</b></div>
     <div class="stack"><button class="btn" onclick="payOnline()">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button>${contato() ? `<p class="hint">Contato: ${esc(contato().phone)} · ${esc(contato().email)} <a href="#" onclick="editContato();return false">alterar</a></p>` : ''}
     <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button>
-    <button class="btn sec" onclick="checkout('maquininha')">Pagar no cartão físico (maquininha)</button></div>`);
+    ${S.cart[0]?.enc ? '' : `<button class="btn sec" onclick="checkout('maquininha')">Pagar no cartão físico (maquininha)</button>`}</div>`);
 }
 function qty(k, d) {
   S.cart[k].qty += d; if (S.cart[k].qty <= 0) S.cart.splice(k, 1); render(); openCart(); }
@@ -305,9 +304,9 @@ function stockFail(e) {
 async function checkout(method) {
   const st = Store.data.settings;
   if (method === 'pix' && !st.pixKey) return toast('Pix ainda não configurado pelo Matheus');
-  const enc = S.cart[0]?.enc ? { data: S.enc.data, hora: S.enc.hora, obs: (S.enc.obs || '').trim() } : null;
+  const enc = S.cart[0]?.enc ? { data: S.enc.data, obs: (S.enc.obs || '').trim() } : null;
   if (enc && (!enc.data || enc.data < minEncData())) return toast('Escolha a data de retirada (a partir de ' + dayLabel(minEncData()) + ')');
-  if (enc && !enc.hora) return toast('Escolha o horário de retirada');
+  if (enc && method === 'maquininha') return toast('Encomenda só é feita com pagamento antecipado: pague online ou por Pix.');
   if (method === 'infinitepay' || method === 'pix') { // um pagamento online por vez: não duplica o pedido
     await checkOpen();
     const aberto = pedidoAbertoOnline();
@@ -336,7 +335,7 @@ async function checkout(method) {
   }
   try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
   limpaCarrinho();
-  if (method === 'maquininha') { render(); return modal(`<h2>${ICON.check} ${order.encomenda ? 'Encomenda registrada' : 'Pedido registrado'}</h2><p>Total de <b>${money(order.total)}</b>. ${order.encomenda ? `Retire em <b>${dayLabel(order.encomenda.data)} às ${esc(order.encomenda.hora)}</b> e pague` : 'Vá ao balcão e pague'} no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
+  if (method === 'maquininha') { render(); return modal(`<h2>${ICON.check} Pedido registrado</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
   // Pix: o pedido fica em aberto neste aparelho até o cliente avisar que pagou
   saveOpen(openIds().concat(order.id)); S.openOrders.push(order); render();
   pixModal(order);
@@ -406,7 +405,7 @@ function pixModal(x) {
     <div class="pix" id="pixcode">${code}</div>
     <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('pixcode').textContent).then(()=>toast('Pix copiado!'))">Copiar Pix copia e cola</button>
     <div class="ask"><p><b>Deu certo o pagamento?</b></p><div class="stack"><button class="btn ok" onclick="clientePagou('${o.id}')">Sim, já paguei</button><button class="btn sec" onclick="aindaNao()">Ainda não</button></div></div>
-    <p class="hint">Se ainda não pagou, o pedido fica em aberto: dá para pagar depois pelo aviso no topo do cardápio ou no balcão.</p>`);
+    <p class="hint">${o.encomenda ? '<b>Encomenda: só será feita depois da confirmação do pagamento.</b> ' : ''}Se ainda não pagou, o pedido fica em aberto: dá para pagar depois pelo aviso no topo do cardápio${o.encomenda ? '' : ' ou no balcão'}.</p>`);
 }
 function aindaNao() { closeModal(); render(); toast('Pedido ficou em aberto. Pague quando puder.'); }
 async function clientePagou(id) {
@@ -542,14 +541,17 @@ function tabEst() {
     <div class="panel"><h3>Últimos lançamentos</h3><table><tr><th>Data</th><th>Item</th><th>Tipo</th><th class="n">Qtd</th></tr>
     ${log.map((l) => `<tr><td>${dayLabel(l.date)}</td><td>${itemName(l.productName, l.flavor)}</td><td>${LOG_TIPO[l.type] || l.type}</td><td class="n">${l.qty > 0 ? '+' : ''}${l.qty}</td></tr>`).join('') || '<tr><td colspan=4>Nenhum lançamento ainda</td></tr>'}</table></div>`;
 }
-const encTag = (o) => (o.encomenda ? ` <span class="tag enc">Encomenda ${dayLabel(o.encomenda.data)} ${esc(o.encomenda.hora)}</span>` : '');
+const encTag = (o) => (o.encomenda ? ` <span class="tag enc">Encomenda ${dayLabel(o.encomenda.data)}${o.encomenda.hora ? ' ' + esc(o.encomenda.hora) : ''}</span>` : '');
 function tabEnc() {
-  const hoje = today(), os = Store.data.orders.filter((o) => o.encomenda && o.status !== 'cancelled'), chave = (o) => o.encomenda.data + ' ' + o.encomenda.hora;
-  const prox = os.filter((o) => o.encomenda.data >= hoje).sort((a, b) => chave(a).localeCompare(chave(b))), pass = os.filter((o) => o.encomenda.data < hoje).sort((a, b) => chave(b).localeCompare(chave(a))).slice(0, 15);
+  const hoje = today(), os = Store.data.orders.filter((o) => o.encomenda && o.status !== 'cancelled'), chave = (o) => o.encomenda.data + ' ' + String(o.createdAt).padStart(15, '0');
+  const pagas = os.filter((o) => o.status === 'paid'), espera = os.filter((o) => o.status !== 'paid').sort((a, b) => chave(a).localeCompare(chave(b)));
+  const prox = pagas.filter((o) => o.encomenda.data >= hoje).sort((a, b) => chave(a).localeCompare(chave(b))), pass = pagas.filter((o) => o.encomenda.data < hoje).sort((a, b) => chave(b).localeCompare(chave(a))).slice(0, 15);
   const fone = (o) => Store.data.customers.find((c) => c.id === nameKey(o.customer))?.phone || '';
-  const row = (o) => `<div class="panel"><div class="row plain"><div><b class="c-gold">${dayLabel(o.encomenda.data)} às ${esc(o.encomenda.hora)}</b><br><b>${esc(o.customer)}</b>${fone(o) ? ` <small>· ${esc(fone(o))}</small>` : ''}<br>${itemsText(o)}${o.encomenda.obs ? `<br><small>Obs.: ${esc(o.encomenda.obs)}</small>` : ''}<br><span class="tag">${ordLabel(o)}</span></div>
-    <div class="r"><b>${money(o.total)}</b>${o.status !== 'paid' ? `<div class="acts col"><button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button><button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button></div>` : ''}</div></div></div>`;
-  $('#tab').innerHTML = `<h3 class="cath">Próximas <small>(${prox.length})</small></h3>${prox.map(row).join('') || '<p class="empty">Nenhuma encomenda marcada.</p>'}${pass.length ? `<h3 class="cath">Anteriores</h3>${pass.map(row).join('')}` : ''}`;
+  const row = (o) => `<div class="panel"><div class="row plain"><div><b class="c-gold">Retirada em ${dayLabel(o.encomenda.data)}${o.encomenda.hora ? ' às ' + esc(o.encomenda.hora) : ''}</b><br><b>${esc(o.customer)}</b>${fone(o) ? ` <small>· ${esc(fone(o))}</small>` : ''}<br>${itemsText(o)}${o.encomenda.obs ? `<br><small>Obs.: ${esc(o.encomenda.obs)}</small>` : ''}<br><span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span></div>
+    <div class="r"><b>${money(o.total)}</b>${o.status !== 'paid' ? `<div class="acts col"><button class="btn ok sm" onclick="markPaid('${o.id}')">${aConferir(o) ? 'Confirmar Pix' : 'Pago'}</button><button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button></div>` : ''}</div></div></div>`;
+  $('#tab').innerHTML = `<h3 class="cath">Para fazer · pagas <small>(${prox.length})</small></h3>${prox.map(row).join('') || '<p class="empty">Nenhuma encomenda paga para fazer.</p>'}
+    ${espera.length ? `<h3 class="cath">Aguardando pagamento · não fazer ainda <small>(${espera.length})</small></h3>${espera.map(row).join('')}` : ''}
+    ${pass.length ? `<h3 class="cath">Anteriores</h3>${pass.map(row).join('')}` : ''}`;
 }
 
 /* Clientes cadastrados: a gerência vê o contato e o código de acesso (4 últimos dígitos do celular) e pode corrigir */
