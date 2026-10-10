@@ -236,7 +236,7 @@ function irCat(id) { const el = document.getElementById(id); if (el) window.scro
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
 function renderMenu() {
   const grupos = groupCats(Store.data.products), n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
-  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
+  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''} ${p.novo ? 'novo' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.novo ? '<span class="selo-novo">Novidade</span>' : ''}${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
       <div class="i"><b>${esc(p.name)}</b><span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
@@ -459,8 +459,8 @@ async function naoCaiu(id) {
 
 function tabProd() {
   const linha = (p) => `<div class="panel row">
-    <div class="pline">${p.photo ? `<img src="${p.photo}" class="thumb" alt="">` : `<div class="thumb ph">${ICON.dish}</div>`}<div><b>${esc(p.name)}</b> ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br><span class="c-gold">${money(p.price)}</span>${isTracked(p) ? `<small> · estoque ${availableTotal(p)}</small>` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
-    <div class="acts col"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`;
+    <div class="pline">${p.photo ? `<img src="${p.photo}" class="thumb" alt="">` : `<div class="thumb ph">${ICON.dish}</div>`}<div><b>${esc(p.name)}</b> ${p.novo ? '<span class="tag nov">Novidade</span>' : ''} ${p.active === false ? '<span class="tag">pausado</span>' : ''}<br><span class="c-gold">${money(p.price)}</span>${isTracked(p) ? `<small> · estoque ${availableTotal(p)}</small>` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
+    <div class="acts col"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="toggleNovo('${p.id}')">${p.novo ? 'Tirar destaque' : 'Marcar novidade'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`;
   $('#tab').innerHTML = `<div class="toolbar"><button class="btn" onclick="editProd()">+ Novo produto</button></div>${groupCats(Store.data.products).map(([c, ps]) => `<h3 class="cath">${esc(c)} <small>(${ps.length})</small></h3>${ps.map(linha).join('')}`).join('') || '<p class="empty">Nenhum produto ainda.</p>'}`;
 }
 async function toggleProd(id) {
@@ -468,9 +468,14 @@ async function toggleProd(id) {
   await Store.put('products', { ...p, active: p.active === false });
   toast(p.active === false ? 'Produto ativado' : 'Produto pausado');
 }
+async function toggleNovo(id) {
+  const p = Store.data.products.find((x) => x.id === id);
+  await Store.put('products', { ...p, novo: !p.novo });
+  toast(p.novo ? 'Destaque de novidade removido' : 'Marcado como novidade');
+}
 let editPhoto = '';
 function editProd(id) {
-  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '' };
+  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '', novo: false };
   editPhoto = p.photo || '';
   const cat = (p.cat || '').trim();
   modal(`<h2>${id ? 'Editar' : 'Novo'} produto</h2>
@@ -483,6 +488,7 @@ function editProd(id) {
     <label class="lbl" for="pf">Sabores</label><input id="pf" placeholder="Separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
     <label class="lbl" for="pimg">Foto</label><div class="photo"><input id="pimg" type="file" accept="image/*" capture="environment"><img id="prev" src="${editPhoto}" alt="" style="${editPhoto ? '' : 'display:none'}"></div>
     <label class="chk"><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''}><span>Controlar estoque<small>Só vende o que foi lançado como produção</small></span></label>
+    <label class="chk"><input type="checkbox" id="pnov" ${p.novo ? 'checked' : ''}><span>Novidade<small>Destaca o produto com o selo "Novidade" no cardápio</small></span></label>
     <label class="chk"><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''}><span>Ativo<small>Desmarque para pausar no cardápio</small></span></label>
     <div class="stack"><button class="btn" onclick="saveProd('${id || ''}')">Salvar</button>${id ? `<button class="btn del" onclick="delProd('${id}')">Excluir</button>` : ''}</div>`);
   $('#pimg').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; editPhoto = await shrink(f); $('#prev').src = editPhoto; $('#prev').style.display = ''; };
@@ -496,7 +502,7 @@ function shrink(file, max = 480) {
 async function saveProd(id) {
   const name = $('#pn').value.trim(), price = parseFloat($('#pp').value);
   if (!name || isNaN(price)) return toast('Informe nome e valor');
-  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, track: $('#pt').checked, cat: $('#pcat').value.trim().replace(/\s+/g, ' ') || 'Outros' });
+  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, track: $('#pt').checked, novo: $('#pnov').checked, cat: $('#pcat').value.trim().replace(/\s+/g, ' ') || 'Outros' });
   closeModal(); render(); toast('Produto salvo');
 }
 async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); render(); }
