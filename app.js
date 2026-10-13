@@ -586,8 +586,35 @@ function tabAnun() {
     ${grupos.map(([c, ps]) => `<h3 class="cath">${esc(c)}</h3>${ps.map((p) => `<label class="chk"><input type="checkbox" ${anunMarcado(p) ? 'checked' : ''} onchange="S.anun.sel['${p.id}']=this.checked;anunAtualiza()"><span>${esc(p.name)}<small>${money(p.price)}</small></span></label>`).join('')}`).join('') || '<p class="empty">Nenhum produto ativo.</p>'}
   </div>
   <div class="panel"><h3>Mensagem</h3><textarea id="anutxt" rows="14" style="width:100%;font:inherit"></textarea>
-    <div class="stack"><button class="btn" onclick="anunCopiar()">Copiar mensagem</button><button class="btn sec" onclick="anunZap()">Abrir no WhatsApp</button></div></div>`;
+    <div class="stack"><button class="btn" onclick="anunCopiar()">Copiar mensagem</button><button class="btn sec" onclick="anunZap()">Abrir no WhatsApp</button><button class="btn sec" onclick="anunPdf()">Exportar em PDF</button></div></div>`;
   anunAtualiza();
+}
+// PDF: abre uma página limpa de cardápio e chama a impressão do aparelho (escolher "Salvar como PDF")
+function anunPdf() {
+  const d = S.anun.date || dayKey(Date.now() + 86400000), dt = new Date(d + 'T12:00:00');
+  const dia = dt.toLocaleDateString('pt-BR', { weekday: 'long' }), base = location.origin + location.pathname;
+  const grupos = groupCats(anunProdutos().filter(anunMarcado));
+  if (!grupos.length) return toast('Marque ao menos um produto');
+  let qr = ''; try { const q = qrcode(0, 'M'); q.addData(base); q.make(); qr = q.createImgTag(4, 0); } catch (e) {}
+  const item = (p) => `<div class="it">${p.photo ? `<img src="${p.photo}" alt="">` : ''}<div class="tx"><b>${esc(p.name)}</b>${p.novo ? ' <span class="nv">NOVIDADE</span>' : ''}
+    ${p.desc ? `<div class="ds">${esc(p.desc)}</div>` : ''}${p.flavors?.length ? `<div class="ds">Sabores: ${esc(p.flavors.join(', '))}</div>` : ''}</div><div class="pr">${money(p.price)}</div></div>`;
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Cardapio ${dayLabel(d).replace(/\//g, '-')}</title><style>
+    @page{margin:14mm}*{box-sizing:border-box}body{font-family:Georgia,'Times New Roman',serif;color:#1d1a14;margin:0}
+    header{text-align:center;border-bottom:3px solid #b8923a;padding-bottom:12px;margin-bottom:14px}header img{width:110px;height:110px;border-radius:50%}
+    h1{margin:6px 0 0;font-size:26px}h1 small{display:block;font-size:15px;font-weight:normal;color:#6b5f48;text-transform:capitalize}
+    .rec{text-align:center;font-style:italic;margin:0 0 14px}h2{font-size:17px;letter-spacing:.12em;text-transform:uppercase;color:#8a6a1c;border-bottom:1px solid #d8c9a0;padding-bottom:3px;margin:18px 0 8px}
+    .it{display:flex;gap:12px;align-items:center;padding:7px 0;border-bottom:1px dotted #d8d2c2;break-inside:avoid}.it img{width:62px;height:62px;object-fit:cover;border-radius:8px}
+    .tx{flex:1}.tx b{font-size:16px}.ds{font-size:12.5px;color:#5a5445;margin-top:1px}.pr{font-weight:bold;font-size:16px;white-space:nowrap}
+    .nv{background:#b8923a;color:#fff;font-size:10px;letter-spacing:.08em;padding:2px 7px;border-radius:9px;vertical-align:middle}
+    footer{margin-top:22px;text-align:center;border-top:3px solid #b8923a;padding-top:12px;font-size:13px;break-inside:avoid}footer img{width:96px;height:96px}
+  </style></head><body><header><img src="${new URL('logo.png', base).href}" alt=""><h1>Cardápio<small>${esc(dia)}, ${dayLabel(d)}</small></h1></header>
+    ${S.anun.recado.trim() ? `<p class="rec">${esc(S.anun.recado.trim())}</p>` : ''}
+    ${grupos.map(([c, ps]) => `<h2>${esc(c)}</h2>${c === CAT_ENC ? '<div class="ds">Sob encomenda: peça com antecedência e pague para garantir.</div>' : ''}${ps.map(item).join('')}`).join('')}
+    <footer>${qr}<div>Peça pelo link: <b>${esc(base)}</b></div><div>Pagamento por Pix ou cartão.</div></footer></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return toast('O navegador bloqueou a janela. Permita pop-ups e tente de novo.');
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 700);
 }
 function anunCopiar() { navigator.clipboard.writeText($('#anutxt').value).then(() => toast('Mensagem copiada! Cole no grupo.'), () => { $('#anutxt').select(); toast('Selecione e copie o texto'); }); }
 function anunZap() { window.open('https://wa.me/?text=' + encodeURIComponent($('#anutxt').value), '_blank'); }
