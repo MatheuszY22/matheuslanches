@@ -239,12 +239,14 @@ function irCat(id) { const el = document.getElementById(id); if (el) window.scro
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
 function renderMenu() {
   const grupos = groupCats(Store.data.products), n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
-  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''} ${p.novo ? 'novo' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.novo ? '<span class="selo-novo">Novidade</span>' : ''}${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
+  const novos = Store.data.products.filter((p) => p.novo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
+  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''} ${p.novo && !out(p) ? 'novo' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.novo && !out(p) ? '<span class="selo-novo">Novidade</span>' : ''}${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
       <div class="i"><b>${esc(p.name)}</b>${p.desc ? `<small class="desc">${esc(p.desc)}</small>` : ''}<span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${isEnc(p) ? '<small>Sob encomenda</small>' : ''}${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
-    ${grupos.length > 1 ? `<div class="cats">${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
+    ${grupos.length > 1 ? `<div class="cats">${novos.length ? '<button class="cat-nov" onclick="irCat(&quot;cat-novidades&quot;)">✨ Novidades</button>' : ''}${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
     <div class="wrap">${openBanner()}${grupos.length ? '' : '<p class="empty">Nenhum produto cadastrado ainda.</p>'}
+    ${novos.length ? `<h2 class="cath novidades" id="cat-novidades">✨ Novidades</h2><div class="grid">${novos.map(card).join('')}</div>` : ''}
     ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2>${c === CAT_ENC ? '<p class="hint enc-hint">Feitos sob encomenda: escolha a data de retirada ao finalizar. Encomendas são pedidas separadas dos demais itens.</p>' : ''}<div class="grid">${ps.map(card).join('')}</div>`).join('')}<div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>${ICON.bag} ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
 }
