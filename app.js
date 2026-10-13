@@ -501,7 +501,7 @@ function editProd(id) {
     <div class="two"><div><label class="lbl" for="pp">Venda (R$)</label><input id="pp" type="number" step="0.01" min="0" placeholder="0,00" value="${p.price}"></div>
     <div><label class="lbl" for="pc">Custo unitário (R$)</label><input id="pc" type="number" step="0.01" min="0" placeholder="Quanto custa fazer 1" value="${p.cost || ''}"></div></div>
     <label class="lbl" for="pf">Sabores</label><input id="pf" placeholder="Separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
-    <label class="lbl" for="pimg">Foto</label><div class="photo"><input id="pimg" type="file" accept="image/*" capture="environment"><img id="prev" src="${editPhoto}" alt="" style="${editPhoto ? '' : 'display:none'}"></div>
+    <label class="lbl" for="pimg">Foto</label><div class="photo"><input id="pimg" type="file" accept="image/*"><img id="prev" src="${editPhoto}" alt="" style="${editPhoto ? '' : 'display:none'}"></div>
     <label class="chk"><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''}><span>Controlar estoque<small>Só vende o que foi lançado como produção</small></span></label>
     <label class="chk"><input type="checkbox" id="pnov" ${p.novo ? 'checked' : ''}><span>Novidade<small>Destaca o produto com o selo "Novidade" no cardápio</small></span></label>
     <label class="chk"><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''}><span>Ativo<small>Desmarque para pausar no cardápio</small></span></label>
