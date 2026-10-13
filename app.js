@@ -424,10 +424,10 @@ async function clientePagou(id) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['enc', 'Encomendas'], ['cli', 'Clientes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
+  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['enc', 'Encomendas'], ['anun', 'Anúncio'], ['cli', 'Clientes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">Painel de gestão</span><h1>${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
-  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, enc: tabEnc, cli: tabCli, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
+  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, enc: tabEnc, anun: tabAnun, cli: tabCli, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
 function tabRel() {
   const r = S.range, now = Date.now();
@@ -553,6 +553,44 @@ function tabEnc() {
     ${espera.length ? `<h3 class="cath">Aguardando pagamento · não fazer ainda <small>(${espera.length})</small></h3>${espera.map(row).join('')}` : ''}
     ${pass.length ? `<h3 class="cath">Anteriores</h3>${pass.map(row).join('')}` : ''}`;
 }
+
+/* Anúncio do dia: monta a mensagem do cardápio para mandar no grupo (WhatsApp) */
+const anunProdutos = () => Store.data.products.filter((p) => p.active !== false);
+const anunMarcado = (p) => (S.anun.sel[p.id] === undefined ? !isEnc(p) : S.anun.sel[p.id]); // encomenda não entra por padrão
+function anunTexto() {
+  const d = S.anun.date || dayKey(Date.now() + 86400000), dt = new Date(d + 'T12:00:00');
+  const dia = dt.toLocaleDateString('pt-BR', { weekday: 'long' }), url = location.origin + location.pathname;
+  const grupos = groupCats(anunProdutos().filter(anunMarcado));
+  const L = ['🍔 *L&M Lanches*', `📅 *Cardápio de ${dia}, ${dayLabel(d)}*`];
+  if (S.anun.recado.trim()) L.push('', S.anun.recado.trim());
+  grupos.forEach(([c, ps]) => {
+    L.push('', `*${c.toUpperCase()}*`);
+    ps.forEach((p) => {
+      L.push(`${p.novo ? '✨' : '•'} *${p.name}* — ${money(p.price)}${p.novo ? ' _(novidade!)_' : ''}`);
+      if (p.desc) L.push(`   ${p.desc}`);
+      if (p.flavors?.length) L.push(`   Sabores: ${p.flavors.join(', ')}`);
+    });
+    if (c === CAT_ENC) L.push('_Sob encomenda: peça com antecedência e pague para garantir._');
+  });
+  L.push('', '🛒 Peça pelo link:', url, 'Pagamento por Pix ou cartão.');
+  return L.join('\n');
+}
+function anunAtualiza() { const t = $('#anutxt'); if (t) t.value = anunTexto(); }
+function tabAnun() {
+  S.anun ||= { date: dayKey(Date.now() + 86400000), recado: '', sel: {} };
+  const grupos = groupCats(anunProdutos());
+  $('#tab').innerHTML = `<div class="panel"><h3>Anúncio do cardápio</h3>
+    <p class="hint">Marque o que vai ter, confira a mensagem e envie no grupo. Você pode editar o texto antes de enviar.</p>
+    <label class="lbl" for="adate">Dia do cardápio</label><input id="adate" type="date" value="${S.anun.date}" onchange="S.anun.date=this.value;anunAtualiza()">
+    <label class="lbl" for="arec">Recado (opcional)</label><input id="arec" placeholder="Ex.: Pedidos até as 18h de hoje" value="${esc(S.anun.recado)}" oninput="S.anun.recado=this.value;anunAtualiza()">
+    ${grupos.map(([c, ps]) => `<h3 class="cath">${esc(c)}</h3>${ps.map((p) => `<label class="chk"><input type="checkbox" ${anunMarcado(p) ? 'checked' : ''} onchange="S.anun.sel['${p.id}']=this.checked;anunAtualiza()"><span>${esc(p.name)}<small>${money(p.price)}</small></span></label>`).join('')}`).join('') || '<p class="empty">Nenhum produto ativo.</p>'}
+  </div>
+  <div class="panel"><h3>Mensagem</h3><textarea id="anutxt" rows="14" style="width:100%;font:inherit"></textarea>
+    <div class="stack"><button class="btn" onclick="anunCopiar()">Copiar mensagem</button><button class="btn sec" onclick="anunZap()">Abrir no WhatsApp</button></div></div>`;
+  anunAtualiza();
+}
+function anunCopiar() { navigator.clipboard.writeText($('#anutxt').value).then(() => toast('Mensagem copiada! Cole no grupo.'), () => { $('#anutxt').select(); toast('Selecione e copie o texto'); }); }
+function anunZap() { window.open('https://wa.me/?text=' + encodeURIComponent($('#anutxt').value), '_blank'); }
 
 /* Clientes cadastrados: a gerência vê o contato e o código de acesso (4 últimos dígitos do celular) e pode corrigir */
 function cliRows(q) {
@@ -794,7 +832,7 @@ function tabCfg() {
 }
 async function saveCfg() { await Store.setSettings({ pixKey: $('#k').value.trim(), pixName: $('#n').value.trim(), pixCity: $('#c').value.trim() }); toast('Salvo'); }
 
-Store.onChange = () => { if ($('#modal').classList.contains('hidden') && !(document.activeElement && ['INPUT', 'SELECT'].includes(document.activeElement.tagName))) render(); };
+Store.onChange = () => { if ($('#modal').classList.contains('hidden') && !(document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName))) render(); };
 /* Volta do checkout da InfinitePay: confere o pagamento e marca o pedido como pago */
 async function handleReturn() {
   const q = new URLSearchParams(location.search), id = q.get('order_nsu');
