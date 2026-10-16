@@ -219,7 +219,7 @@ async function registerCustomer() {
     await Store.put('customers', c); enterCustomer(c);
   } catch (e) { toast('Não foi possível cadastrar. Tente de novo.'); }
 }
-function logout() { S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.openOrders = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
+function logout() { sessionStorage.removeItem('lanche-promo-visto'); S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.openOrders = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
 /* --- categorias: o cardápio e a lista de produtos ficam separados por tipo, nesta ordem --- */
 const CAT_COMBO = 'Combos', CAT_ENC = 'Encomendas';
 const CATP = [CAT_COMBO, 'Entradas', 'Refeições', 'Lanches', 'Acompanhamentos', 'Bebidas', 'Sobremesas', 'Cafés', 'Outros', CAT_ENC];
@@ -237,18 +237,29 @@ const allCats = () => [...new Set(CATP.concat(Store.data.products.map(catOf)))];
 function irCat(id) { const el = document.getElementById(id); if (el) window.scrollTo({ top: el.offsetTop - 132, behavior: 'smooth' }); }
 /* --- cliente --- */
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
+/* Ao entrar no usuário, mostra as promoções uma vez por sessão (espera os produtos carregarem e nenhuma outra janela aberta) */
+function promoPopup() {
+  if (S.admin || !S.user || sessionStorage.getItem('lanche-promo-visto') || !$('#modal').classList.contains('hidden')) return;
+  const ps = Store.data.products.filter((p) => p.promo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
+  if (!ps.length) return;
+  sessionStorage.setItem('lanche-promo-visto', '1');
+  modal(`<h2>🔥 Promoções de hoje</h2><p class="lead">Aproveite, olá ${esc(S.user)}!</p>${ps.map((p) => `<div class="row"><div><span class="nm">${esc(p.name)}</span>${p.desc ? `<br><small>${esc(p.desc)}</small>` : ''}<br>${p.oldPrice > p.price ? `<s class="velho">${money(p.oldPrice)}</s> ` : ''}<b class="c-gold">${money(p.price)}</b></div><button class="btn sm" onclick="pick('${p.id}')">${p.flavors?.length ? 'Escolher sabor' : 'Adicionar'}</button></div>`).join('')}<div class="stack"><button class="btn sec" onclick="closeModal()">Ver o cardápio</button></div>`);
+}
 function renderMenu() {
   const grupos = groupCats(Store.data.products), n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
+  const promos = Store.data.products.filter((p) => p.promo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
   const novos = Store.data.products.filter((p) => p.novo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
-  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''} ${p.novo && !out(p) ? 'novo' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.novo && !out(p) ? '<span class="selo-novo">Novidade</span>' : ''}${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
-      <div class="i"><b>${esc(p.name)}</b>${p.desc ? `<small class="desc">${esc(p.desc)}</small>` : ''}<span class="pr">${out(p) ? 'Esgotado' : money(p.price)}</span>${isEnc(p) ? '<small>Sob encomenda</small>' : ''}${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
+  const card = (p) => `<div class="prod ${out(p) ? 'off' : ''} ${p.novo && !out(p) ? 'novo' : ''} ${p.promo && !out(p) ? 'promo' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.novo && !out(p) ? '<span class="selo-novo">Novidade</span>' : ''}${p.promo && !out(p) ? '<span class="selo-promo">Promoção</span>' : ''}${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
+      <div class="i"><b>${esc(p.name)}</b>${p.desc ? `<small class="desc">${esc(p.desc)}</small>` : ''}<span class="pr">${out(p) ? 'Esgotado' : `${p.promo && p.oldPrice > p.price ? `<s class="velho">${money(p.oldPrice)}</s> ` : ''}${money(p.price)}`}</span>${isEnc(p) ? '<small>Sob encomenda</small>' : ''}${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
-    ${grupos.length > 1 ? `<div class="cats">${novos.length ? '<button class="cat-nov" onclick="irCat(&quot;cat-novidades&quot;)">✨ Novidades</button>' : ''}${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
+    ${grupos.length > 1 ? `<div class="cats">${promos.length ? '<button class="cat-promo" onclick="irCat(&quot;cat-promocoes&quot;)">🔥 Promoções</button>' : ''}${novos.length ? '<button class="cat-nov" onclick="irCat(&quot;cat-novidades&quot;)">✨ Novidades</button>' : ''}${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
     <div class="wrap">${openBanner()}${grupos.length ? '' : '<p class="empty">Nenhum produto cadastrado ainda.</p>'}
+    ${promos.length ? `<h2 class="cath promocoes" id="cat-promocoes">🔥 Promoções</h2><div class="grid">${promos.map(card).join('')}</div>` : ''}
     ${novos.length ? `<h2 class="cath novidades" id="cat-novidades">✨ Novidades</h2><div class="grid">${novos.map(card).join('')}</div>` : ''}
     ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2>${c === CAT_ENC ? '<p class="hint enc-hint">Feitos sob encomenda: escolha a data de retirada ao finalizar. Encomendas são pedidas separadas dos demais itens.</p>' : ''}<div class="grid">${ps.map(card).join('')}</div>`).join('')}<div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>${ICON.bag} ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
+  promoPopup();
 }
 const cartTotal = () => S.cart.reduce((a, i) => a + i.price * i.qty, 0);
 function pick(id) {
@@ -475,14 +486,19 @@ async function naoCaiu(id) {
 
 function tabProd() {
   const linha = (p) => `<div class="panel row">
-    <div class="pline">${p.photo ? `<img src="${p.photo}" class="thumb" alt="">` : `<div class="thumb ph">${ICON.dish}</div>`}<div><b>${esc(p.name)}</b> ${p.novo ? '<span class="tag nov">Novidade</span>' : ''} ${p.active === false ? '<span class="tag">pausado</span>' : ''}${p.desc ? `<br><small>${esc(p.desc)}</small>` : ''}<br><span class="c-gold">${money(p.price)}</span>${isTracked(p) ? `<small> · estoque ${availableTotal(p)}</small>` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
-    <div class="acts col"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="toggleNovo('${p.id}')">${p.novo ? 'Tirar destaque' : 'Marcar novidade'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`;
+    <div class="pline">${p.photo ? `<img src="${p.photo}" class="thumb" alt="">` : `<div class="thumb ph">${ICON.dish}</div>`}<div><b>${esc(p.name)}</b> ${p.novo ? '<span class="tag nov">Novidade</span>' : ''} ${p.promo ? '<span class="tag promo">Promoção</span>' : ''} ${p.active === false ? '<span class="tag">pausado</span>' : ''}${p.desc ? `<br><small>${esc(p.desc)}</small>` : ''}<br><span class="c-gold">${money(p.price)}</span>${isTracked(p) ? `<small> · estoque ${availableTotal(p)}</small>` : ''}${p.flavors?.length ? `<br><small>${esc(p.flavors.join(', '))}</small>` : ''}</div></div>
+    <div class="acts col"><button class="btn sm ${p.active === false ? 'ok' : 'sec'}" onclick="toggleProd('${p.id}')">${p.active === false ? 'Ativar' : 'Pausar'}</button><button class="btn sec sm" onclick="togglePromo('${p.id}')">${p.promo ? 'Tirar promoção' : 'Marcar promoção'}</button><button class="btn sec sm" onclick="toggleNovo('${p.id}')">${p.novo ? 'Tirar destaque' : 'Marcar novidade'}</button><button class="btn sec sm" onclick="editProd('${p.id}')">Editar</button></div></div>`;
   $('#tab').innerHTML = `<div class="toolbar"><button class="btn" onclick="editProd()">+ Novo produto</button></div>${groupCats(Store.data.products).map(([c, ps]) => `<h3 class="cath">${esc(c)} <small>(${ps.length})</small></h3>${ps.map(linha).join('')}`).join('') || '<p class="empty">Nenhum produto ainda.</p>'}`;
 }
 async function toggleProd(id) {
   const p = Store.data.products.find((x) => x.id === id);
   await Store.put('products', { ...p, active: p.active === false });
   toast(p.active === false ? 'Produto ativado' : 'Produto pausado');
+}
+async function togglePromo(id) {
+  const p = Store.data.products.find((x) => x.id === id);
+  await Store.put('products', { ...p, promo: !p.promo });
+  toast(p.promo ? 'Promoção encerrada' : 'Marcado como promoção');
 }
 async function toggleNovo(id) {
   const p = Store.data.products.find((x) => x.id === id);
@@ -491,7 +507,7 @@ async function toggleNovo(id) {
 }
 let editPhoto = '';
 function editProd(id) {
-  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '', novo: false };
+  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '', novo: false, promo: false, oldPrice: 0 };
   editPhoto = p.photo || '';
   const cat = (p.cat || '').trim();
   modal(`<h2>${id ? 'Editar' : 'Novo'} produto</h2>
@@ -505,6 +521,8 @@ function editProd(id) {
     <label class="lbl" for="pf">Sabores</label><input id="pf" placeholder="Separados por vírgula (deixe vazio se não tiver)" value="${esc((p.flavors || []).join(', '))}">
     <label class="lbl" for="pimg">Foto</label><div class="photo"><input id="pimg" type="file" accept="image/*"><img id="prev" src="${editPhoto}" alt="" style="${editPhoto ? '' : 'display:none'}"></div>
     <label class="chk"><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''}><span>Controlar estoque<small>Só vende o que foi lançado como produção</small></span></label>
+    <label class="chk"><input type="checkbox" id="pprom" ${p.promo ? 'checked' : ''}><span>Promoção<small>Destaca no cardápio e avisa o cliente quando ele entra</small></span></label>
+    <div class="two"><div><label class="lbl" for="pold">Preço antigo (opcional)</label><input id="pold" type="number" step="0.01" min="0" placeholder="Aparece riscado" value="${p.oldPrice || ''}"></div><div></div></div>
     <label class="chk"><input type="checkbox" id="pnov" ${p.novo ? 'checked' : ''}><span>Novidade<small>Destaca o produto com o selo "Novidade" no cardápio</small></span></label>
     <label class="chk"><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''}><span>Ativo<small>Desmarque para pausar no cardápio</small></span></label>
     <div class="stack"><button class="btn" onclick="saveProd('${id || ''}')">Salvar</button>${id ? `<button class="btn del" onclick="delProd('${id}')">Excluir</button>` : ''}</div>`);
@@ -519,7 +537,7 @@ function shrink(file, max = 480) {
 async function saveProd(id) {
   const name = $('#pn').value.trim(), price = parseFloat($('#pp').value);
   if (!name || isNaN(price)) return toast('Informe nome e valor');
-  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, desc: $('#pdesc').value.trim(), track: $('#pt').checked, novo: $('#pnov').checked, cat: $('#pcat').value.trim().replace(/\s+/g, ' ') || 'Outros' });
+  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, desc: $('#pdesc').value.trim(), track: $('#pt').checked, novo: $('#pnov').checked, promo: $('#pprom').checked, oldPrice: parseFloat($('#pold').value) || 0, cat: $('#pcat').value.trim().replace(/\s+/g, ' ') || 'Outros' });
   closeModal(); render(); toast('Produto salvo');
 }
 async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); render(); }
@@ -568,7 +586,7 @@ function anunTexto() {
   grupos.forEach(([c, ps]) => {
     L.push('', `*${c.toUpperCase()}*`);
     ps.forEach((p) => {
-      L.push(`${p.novo ? '✨' : '•'} *${p.name}* — ${money(p.price)}${p.novo ? ' _(novidade!)_' : ''}`);
+      L.push(`${p.promo ? '🔥' : p.novo ? '✨' : '•'} *${p.name}* — ${p.promo && p.oldPrice > p.price ? `~${money(p.oldPrice)}~ ` : ''}${money(p.price)}${p.promo ? ' _(promoção!)_' : p.novo ? ' _(novidade!)_' : ''}`);
       if (p.desc) L.push(`   ${p.desc}`);
       if (p.flavors?.length) L.push(`   Sabores: ${p.flavors.join(', ')}`);
     });

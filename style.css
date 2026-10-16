@@ -220,3 +220,14 @@ small.sub{display:inline-block;margin-top:4px}small.sub.conf{color:var(--ok);fon
 .encbox h3{margin:0 0 8px;font-size:18px}
 .enc-hint{margin:-4px 0 12px}
 .tag.enc{background:rgba(120,170,255,.16);color:#a9c6ff}
+/* Promoções */
+:root{--promo:#e8573f}
+.cath.promocoes{color:#ff9a86;text-shadow:0 0 18px rgba(232,87,63,.45)}
+.prod.promo{border-color:var(--promo);box-shadow:0 0 0 1px var(--promo) inset,0 6px 22px rgba(232,87,63,.22)}
+.prod.promo.novo{border-color:var(--gold)}
+.selo-promo{position:absolute;top:-12px;right:12px;z-index:1;background:linear-gradient(90deg,#ff7a59,#e8573f);color:#fff;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:5px 13px;border-radius:999px;box-shadow:0 3px 10px rgba(232,87,63,.55);animation:pulsa 1.8s ease-in-out infinite}
+.selo-promo::before{content:"🔥 "}
+s.velho{color:var(--mut);font-size:13px;font-weight:400;margin-right:4px}
+.tag.promo{background:var(--promo);color:#fff;font-weight:600}
+.cats .cat-promo{border-color:var(--promo);color:#ff9a86;font-weight:600}
+@media (prefers-reduced-motion:reduce){.selo-promo{animation:none}}
