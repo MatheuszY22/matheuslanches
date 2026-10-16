@@ -371,7 +371,7 @@ async function checkout(method) {
   }
   try { await Store.placeOrder(order); } catch (e) { return stockFail(e); }
   limpaCarrinho();
-  if (method === 'maquininha') { render(); return modal(`<h2>${ICON.check} Pedido registrado</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
+  if (method === 'maquininha') { saveOpen(openIds().concat(order.id)); S.openOrders.push(order); render(); return modal(`<h2>${ICON.check} Pedido registrado</h2><p>Total de <b>${money(order.total)}</b>. Vá ao balcão e pague no <b>cartão físico</b> (maquininha), informando o nome <b>${esc(order.customer)}</b>.</p><button class="btn" onclick="closeModal()">Ok</button>`); }
   // Pix: o pedido fica em aberto neste aparelho até o cliente avisar que pagou
   saveOpen(openIds().concat(order.id)); S.openOrders.push(order); render();
   pixModal(order);
@@ -398,13 +398,15 @@ async function checkOpen() {
   saveOpen(os.map((o) => o.id)); S.openOrders = os;
   if (S.user && !S.admin && $('#modal').classList.contains('hidden')) renderMenu();
 }
-const openBanner = () => S.openOrders.map((o) => o.method === 'infinitepay'
+const openBanner = () => S.openOrders.map((o) => o.method === 'maquininha'
+  ? `<div class="aberto"><div><b>Pedido para pagar no balcão · ${money(o.total)}</b><br><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · ${itemsText(o)}</small></div><div class="acts"><button class="btn sec sm" onclick="alterarPedido('${o.id}')">Alterar</button><button class="btn sec sm" onclick="cancelOpen('${o.id}')">Cancelar</button></div></div>`
+  : o.method === 'infinitepay'
   ? `<div class="aberto"><div><b>Pagamento não concluído · ${money(o.total)}</b><br><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · ${itemsText(o)}</small></div>
-    <div class="acts"><button class="btn sm" onclick="continuar('${o.id}')">Continuar o pagamento</button><button class="btn sec sm" onclick="cancelOpen('${o.id}')">Cancelar pedido</button></div></div>`
+    <div class="acts"><button class="btn sm" onclick="continuar('${o.id}')">Continuar o pagamento</button><button class="btn sec sm" onclick="alterarPedido('${o.id}')">Alterar</button><button class="btn sec sm" onclick="cancelOpen('${o.id}')">Cancelar pedido</button></div></div>`
   : o.clientPaid
-  ?`<div class="aberto ok"><div><b>Pix informado · ${money(o.total)}</b><br><small>${itemsText(o)} · o Matheus confere o comprovante e dá a baixa</small></div></div>`
+  ?`<div class="aberto ok"><div><b>Pix informado · ${money(o.total)}</b><br><small>${itemsText(o)} · o Matheus confere o comprovante e dá a baixa</small></div><div class="acts"><button class="btn sec sm" onclick="desfazerPix('${o.id}')">Não paguei, foi engano</button></div></div>`
   : `<div class="aberto"><div><b>Pedido em aberto · ${money(o.total)}</b><br><small>${new Date(o.createdAt).toLocaleString('pt-BR')} · ${itemsText(o)}</small></div>
-    <div class="acts"><button class="btn sm" onclick="pixModal('${o.id}')">Pagar com Pix</button><button class="btn ok sm" onclick="clientePagou('${o.id}')">Já paguei</button></div></div>`).join('');
+    <div class="acts"><button class="btn sm" onclick="pixModal('${o.id}')">Pagar com Pix</button><button class="btn ok sm" onclick="clientePagou('${o.id}')">Já paguei</button><button class="btn sec sm" onclick="alterarPedido('${o.id}')">Alterar</button><button class="btn sec sm" onclick="cancelOpen('${o.id}')">Cancelar</button></div></div>`).join('');
 // Retoma o pagamento de um pedido em aberto (mesmo link da InfinitePay, ou o Pix) em vez de criar outro pedido
 function continuar(id) {
   const o = S.openOrders.find((x) => x.id === id);
@@ -412,11 +414,33 @@ function continuar(id) {
   if (o.method === 'infinitepay' && o.payUrl) { location.href = o.payUrl; return; }
   closeModal(); pixModal(o);
 }
+// Alterar: cancela o pedido em aberto (devolve o estoque) e devolve os itens ao carrinho para o cliente ajustar
+async function alterarPedido(id) {
+  const o = S.openOrders.find((x) => x.id === id);
+  if (!o) return;
+  if (S.cart.length && !confirm('Seu pedido atual será substituído pelos itens deste. Continuar?')) return;
+  if (!confirm('Alterar este pedido? Se você já pagou, não altere: fale com o Matheus.')) return;
+  try { await Store.cancelOrder(o, 'alterado'); } catch (e) { return toast(e.message === 'MUDOU' ? 'Esse pedido já foi pago ou alterado.' : 'Não foi possível alterar. Tente de novo.'); }
+  saveOpen(openIds().filter((x) => x !== id)); S.openOrders = S.openOrders.filter((x) => x.id !== id);
+  S.cart = o.items.map((i) => ({ productId: i.productId, name: i.name, flavor: i.flavor, price: i.price, cost: i.cost || 0, qty: i.qty, enc: !!o.encomenda }));
+  if (o.encomenda) S.enc = { data: o.encomenda.data, obs: o.encomenda.obs || '' };
+  render(); openCart(); toast('Ajuste as quantidades e finalize de novo');
+}
+async function desfazerPix(id) {
+  let o; try { o = await getOrder(id); } catch (e) { return toast('Sem conexão. Tente de novo.'); }
+  if (!o || o.status !== 'pending') { await checkOpen(); return render(); }
+  if (!confirm('Desfazer o aviso de pagamento? O pedido volta a ficar em aberto.')) return;
+  try { await Store.put('orders', { ...o, clientPaid: false, clientPaidAt: null }); } catch (e) { return toast('Não foi possível desfazer. Tente de novo.'); }
+  S.openOrders = S.openOrders.map((x) => (x.id === id ? { ...o, clientPaid: false } : x)); render(); toast('Pedido voltou para em aberto');
+}
 async function cancelOpen(id, depois) {
   const o = S.openOrders.find((x) => x.id === id);
   if (!o) return;
   if (!depois && !confirm('Cancelar este pedido? Se você já pagou, não cancele: fale com o Matheus.')) return;
-  try { await Store.cancelOrder(o, 'cliente'); } catch (e) { if (e.message !== 'MUDOU') return toast('Não foi possível cancelar. Tente de novo.'); toast('Esse pedido já foi pago ou alterado.'); }
+  try { await Store.cancelOrder(o, 'cliente'); } catch (e) {
+    if (e.message !== 'MUDOU') return toast('Não foi possível cancelar. Tente de novo.');
+    await checkOpen(); render(); return toast('Esse pedido já foi pago ou alterado, então não foi cancelado.');
+  }
   saveOpen(openIds().filter((x) => x !== id)); S.openOrders = S.openOrders.filter((x) => x.id !== id);
   if (!depois) { render(); toast('Pedido cancelado'); }
 }
