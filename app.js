@@ -243,14 +243,14 @@ function promoPopup() {
   const ps = Store.data.products.filter((p) => p.promo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
   if (!ps.length) return;
   sessionStorage.setItem('lanche-promo-visto', '1');
-  modal(`<h2>🔥 Promoções de hoje</h2><p class="lead">Aproveite, olá ${esc(S.user)}!</p>${ps.map((p) => `<div class="row"><div><span class="nm">${esc(p.name)}</span>${p.desc ? `<br><small>${esc(p.desc)}</small>` : ''}<br>${p.oldPrice > p.price ? `<s class="velho">${money(p.oldPrice)}</s> ` : ''}<b class="c-gold">${money(p.price)}</b></div><button class="btn sm" onclick="pick('${p.id}')">${p.flavors?.length ? 'Escolher sabor' : 'Adicionar'}</button></div>`).join('')}<div class="stack"><button class="btn sec" onclick="closeModal()">Ver o cardápio</button></div>`);
+  modal(`<h2>🔥 Promoções de hoje</h2><p class="lead">Aproveite, olá ${esc(S.user)}!</p>${ps.map((p) => `<div class="row"><div><span class="nm">${esc(p.name)}</span>${p.desc ? `<br><small>${esc(p.desc)}</small>` : ''}${p.leve2 ? '<br><small class="l2">Compre 1, o 2º sai pela metade</small>' : ''}<br>${p.oldPrice > p.price ? `<s class="velho">${money(p.oldPrice)}</s> ` : ''}<b class="c-gold">${money(p.price)}</b></div><button class="btn sm" onclick="pick('${p.id}')">${p.flavors?.length ? 'Escolher sabor' : 'Adicionar'}</button></div>`).join('')}<div class="stack"><button class="btn sec" onclick="closeModal()">Ver o cardápio</button></div>`);
 }
 function renderMenu() {
   const grupos = groupCats(Store.data.products), n = S.cart.reduce((a, i) => a + i.qty, 0), tot = cartTotal();
   const promos = Store.data.products.filter((p) => p.promo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
   const novos = Store.data.products.filter((p) => p.novo && !out(p)).sort((a, b) => a.name.localeCompare(b.name));
   const card = (p) => `<div class="prod ${out(p) ? 'off' : ''} ${p.novo && !out(p) ? 'novo' : ''} ${p.promo && !out(p) ? 'promo' : ''}" ${out(p) ? '' : `onclick="pick('${p.id}')"`}>${p.novo && !out(p) ? '<span class="selo-novo">Novidade</span>' : ''}${p.promo && !out(p) ? '<span class="selo-promo">Promoção</span>' : ''}${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="ph">${ICON.dish}</div>`}
-      <div class="i"><b>${esc(p.name)}</b>${p.desc ? `<small class="desc">${esc(p.desc)}</small>` : ''}<span class="pr">${out(p) ? 'Esgotado' : `${p.promo && p.oldPrice > p.price ? `<s class="velho">${money(p.oldPrice)}</s> ` : ''}${money(p.price)}`}</span>${isEnc(p) ? '<small>Sob encomenda</small>' : ''}${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
+      <div class="i"><b>${esc(p.name)}</b>${p.desc ? `<small class="desc">${esc(p.desc)}</small>` : ''}${p.leve2 && !out(p) ? '<small class="l2">Compre 1, o 2º sai pela metade</small>' : ''}<span class="pr">${out(p) ? 'Esgotado' : `${p.promo && p.oldPrice > p.price ? `<s class="velho">${money(p.oldPrice)}</s> ` : ''}${money(p.price)}`}</span>${isEnc(p) ? '<small>Sob encomenda</small>' : ''}${!out(p) && p.flavors?.length ? `<small>${p.flavors.length} sabores</small>` : ''}
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
     ${grupos.length > 1 ? `<div class="cats">${promos.length ? '<button class="cat-promo" onclick="irCat(&quot;cat-promocoes&quot;)">🔥 Promoções</button>' : ''}${novos.length ? '<button class="cat-nov" onclick="irCat(&quot;cat-novidades&quot;)">✨ Novidades</button>' : ''}${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
@@ -261,7 +261,25 @@ function renderMenu() {
     ${n ? `<div class="cartbar" onclick="openCart()"><span>${ICON.bag} ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
   promoPopup();
 }
-const cartTotal = () => S.cart.reduce((a, i) => a + i.price * i.qty, 0);
+/* Promoção "leve 2": em cada par de unidades do mesmo produto (sabores se somam), a 2ª sai pela metade.
+   Retorna as linhas com dq (unidades com desconto) e o total em centavos: tudo em centavos para fechar exato. */
+const centavos = (v) => Math.round(Number(v || 0) * 100);
+const descUn = (price) => Math.floor(centavos(price) / 2); // desconto por unidade com 50%
+function calcPedido(lines) {
+  const vistos = {};
+  const out = lines.map((l) => {
+    const p = Store.data.products.find((x) => x.id === l.productId), ant = vistos[l.productId] || 0;
+    vistos[l.productId] = ant + l.qty;
+    const dq = p?.leve2 ? Math.floor((ant + l.qty) / 2) - Math.floor(ant / 2) : 0;
+    return { ...l, dq };
+  });
+  const desconto = out.reduce((a, l) => a + l.dq * descUn(l.price), 0);
+  const bruto = out.reduce((a, l) => a + centavos(l.price) * l.qty, 0);
+  return { lines: out, descontoC: desconto, totalC: bruto - desconto };
+}
+const lineRev = (i) => i.qty * i.price - ((i.dq || 0) * descUn(i.price)) / 100; // receita real da linha (com desconto)
+const cartTotal = () => calcPedido(S.cart).totalC / 100;
+const l2Falta = () => { const q = {}; S.cart.forEach((l) => (q[l.productId] = (q[l.productId] || 0) + l.qty)); return Object.entries(q).filter(([id, n]) => n % 2 === 1 && Store.data.products.find((p) => p.id === id)?.leve2).map(([id]) => Store.data.products.find((p) => p.id === id).name); };
 function pick(id) {
   const p = Store.data.products.find((x) => x.id === id);
   if (!p.flavors?.length) return addCart(p, '');
@@ -284,6 +302,8 @@ function openCart() {
   if (!S.cart.length) return closeModal();
   modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div><span class="nm">${esc(i.name)}</span>${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
     <div class="qty"><button onclick="qty(${k},-1)" aria-label="Menos">−</button>${i.qty}<button onclick="qty(${k},1)" aria-label="Mais">+</button></div></div>`).join('')}
+    ${l2Falta().map((n) => `<p class="hint l2dica">Adicione mais 1 <b>${esc(n)}</b>: o 2º sai pela metade do preço.</p>`).join('')}
+    ${calcPedido(S.cart).descontoC ? `<div class="descrow"><span>Desconto · 2º pela metade</span><b>− ${money(calcPedido(S.cart).descontoC / 100)}</b></div>` : ''}
     ${encBox()}<div class="total"><span>Total</span><b>${money(cartTotal())}</b></div>
     <div class="stack"><button class="btn" onclick="payOnline()">Pagar agora: cartão, Apple Pay, Google Pay ou Pix</button>${contato() ? `<p class="hint">Contato: ${esc(contato().phone)} · ${esc(contato().email)} <a href="#" onclick="editContato();return false">alterar</a></p>` : ''}
     <button class="btn sec" onclick="checkout('pix')">Só Pix copia e cola</button>
@@ -327,14 +347,17 @@ async function checkout(method) {
   }
   const paused = S.cart.filter((i) => Store.data.products.find((p) => p.id === i.productId)?.active === false);
   if (paused.length) { S.cart = S.cart.filter((i) => !paused.includes(i)); render(); closeModal(); return toast(paused.map((i) => i.name).join(', ') + ' acabou e saiu do pedido'); }
-  const order = { id: uid(), customer: S.user, items: S.cart.map((i) => ({ ...i })), total: cartTotal(), status: 'pending', method, createdAt: Date.now(), paidAt: null };
+  const order = { id: uid(), customer: S.user, items: calcPedido(S.cart).lines, total: cartTotal(), status: 'pending', method, createdAt: Date.now(), paidAt: null };
   if (enc) order.encomenda = enc;
   if (method === 'infinitepay') {
     $('#modal .box').innerHTML = '<h2>Abrindo o pagamento…</h2><p>Aguarde um instante.</p>';
     try {
       const r = await fetch(IP_API + '/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         handle: IP_HANDLE, order_nsu: order.id, redirect_url: location.origin + location.pathname, webhook_url: IP_WEBHOOK,
-        items: order.items.map((i) => ({ quantity: i.qty, price: Math.round(i.price * 100), description: i.name + (i.flavor ? ' (' + i.flavor + ')' : '') })),
+        items: order.items.flatMap((i) => { const d = i.name + (i.flavor ? ' (' + i.flavor + ')' : ''), dq = i.dq || 0, a = [];
+          if (i.qty - dq > 0) a.push({ quantity: i.qty - dq, price: centavos(i.price), description: d });
+          if (dq > 0) a.push({ quantity: dq, price: centavos(i.price) - descUn(i.price), description: d + ' (2º com 50%)' });
+          return a; }),
         customer: { name: order.customer, email: contato()?.email, phone_number: '+55' + soDigitos(contato()?.phone) } }) });
       const j = await r.json().catch(() => ({}));
       order.payUrl = j.url || j.link || j.checkout_url || j.payment_url || Object.values(j).find((v) => typeof v === 'string' && v.startsWith('https://') && !v.includes('app.infinitepay.io/external')) || '';
@@ -449,7 +472,7 @@ function tabRel() {
   const paid = os.filter((o) => o.status === 'paid'), pend = os.filter((o) => o.status !== 'paid'), conf = pend.filter(aConferir);
   const sum = (a) => a.reduce((x, o) => x + o.total, 0);
   const byDay = {}; os.forEach((o) => { const d = byDay[dayKey(o.createdAt)] ||= { n: 0, paid: 0, pend: 0 }; d.n++; o.status === 'paid' ? (d.paid += o.total) : (d.pend += o.total); });
-  const prods = {}; os.forEach((o) => o.items.forEach((i) => { const p = prods[i.name] ||= { q: 0, v: 0 }; p.q += i.qty; p.v += i.qty * i.price; }));
+  const prods = {}; os.forEach((o) => o.items.forEach((i) => { const p = prods[i.name] ||= { q: 0, v: 0 }; p.q += i.qty; p.v += lineRev(i); }));
   const top = Object.entries(prods).sort((a, b) => b[1].q - a[1].q), max = top[0]?.[1].q || 1;
   $('#tab').innerHTML = `<div class="toolbar">${rangeSelect()}</div>
     <div class="cards"><div class="stat click" onclick="detail('vendido')"><span>Total vendido</span><b>${money(sum(os))}</b></div><div class="stat click" onclick="detail('recebido')"><span>Recebido</span><b class="c-ok">${money(sum(paid))}</b></div>
@@ -497,7 +520,7 @@ async function toggleProd(id) {
 }
 async function togglePromo(id) {
   const p = Store.data.products.find((x) => x.id === id);
-  await Store.put('products', { ...p, promo: !p.promo });
+  await Store.put('products', { ...p, promo: !p.promo, leve2: p.promo ? false : p.leve2 });
   toast(p.promo ? 'Promoção encerrada' : 'Marcado como promoção');
 }
 async function toggleNovo(id) {
@@ -507,7 +530,7 @@ async function toggleNovo(id) {
 }
 let editPhoto = '';
 function editProd(id) {
-  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '', novo: false, promo: false, oldPrice: 0 };
+  const p = Store.data.products.find((x) => x.id === id) || { name: '', price: '', cost: '', flavors: [], photo: '', active: true, track: true, cat: '', novo: false, promo: false, leve2: false, oldPrice: 0 };
   editPhoto = p.photo || '';
   const cat = (p.cat || '').trim();
   modal(`<h2>${id ? 'Editar' : 'Novo'} produto</h2>
@@ -522,6 +545,7 @@ function editProd(id) {
     <label class="lbl" for="pimg">Foto</label><div class="photo"><input id="pimg" type="file" accept="image/*"><img id="prev" src="${editPhoto}" alt="" style="${editPhoto ? '' : 'display:none'}"></div>
     <label class="chk"><input type="checkbox" id="pt" ${p.track === true ? 'checked' : ''}><span>Controlar estoque<small>Só vende o que foi lançado como produção</small></span></label>
     <label class="chk"><input type="checkbox" id="pprom" ${p.promo ? 'checked' : ''}><span>Promoção<small>Destaca no cardápio e avisa o cliente quando ele entra</small></span></label>
+    <label class="chk"><input type="checkbox" id="pl2" ${p.leve2 ? 'checked' : ''}><span>Leve 2: 2ª unidade pela metade<small>A cada 2 unidades, a segunda sai com 50% de desconto, direto no total (sabores se somam)</small></span></label>
     <div class="two"><div><label class="lbl" for="pold">Preço antigo (opcional)</label><input id="pold" type="number" step="0.01" min="0" placeholder="Aparece riscado" value="${p.oldPrice || ''}"></div><div></div></div>
     <label class="chk"><input type="checkbox" id="pnov" ${p.novo ? 'checked' : ''}><span>Novidade<small>Destaca o produto com o selo "Novidade" no cardápio</small></span></label>
     <label class="chk"><input type="checkbox" id="pa" ${p.active !== false ? 'checked' : ''}><span>Ativo<small>Desmarque para pausar no cardápio</small></span></label>
@@ -537,7 +561,7 @@ function shrink(file, max = 480) {
 async function saveProd(id) {
   const name = $('#pn').value.trim(), price = parseFloat($('#pp').value);
   if (!name || isNaN(price)) return toast('Informe nome e valor');
-  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, desc: $('#pdesc').value.trim(), track: $('#pt').checked, novo: $('#pnov').checked, promo: $('#pprom').checked, oldPrice: parseFloat($('#pold').value) || 0, cat: $('#pcat').value.trim().replace(/\s+/g, ' ') || 'Outros' });
+  await Store.put('products', { id: id || uid(), name, price, flavors: $('#pf').value.split(',').map((s) => s.trim()).filter(Boolean), photo: editPhoto, active: $('#pa').checked, cost: parseFloat($('#pc').value) || 0, desc: $('#pdesc').value.trim(), track: $('#pt').checked, novo: $('#pnov').checked, promo: $('#pprom').checked || $('#pl2').checked, leve2: $('#pl2').checked, oldPrice: parseFloat($('#pold').value) || 0, cat: $('#pcat').value.trim().replace(/\s+/g, ' ') || 'Outros' });
   closeModal(); render(); toast('Produto salvo');
 }
 async function delProd(id) { if (!confirm('Excluir este produto?')) return; await Store.remove('products', id); closeModal(); render(); }
@@ -586,7 +610,7 @@ function anunTexto() {
   grupos.forEach(([c, ps]) => {
     L.push('', `*${c.toUpperCase()}*`);
     ps.forEach((p) => {
-      L.push(`${p.promo ? '🔥' : p.novo ? '✨' : '•'} *${p.name}* — ${p.promo && p.oldPrice > p.price ? `~${money(p.oldPrice)}~ ` : ''}${money(p.price)}${p.promo ? ' _(promoção!)_' : p.novo ? ' _(novidade!)_' : ''}`);
+      L.push(`${p.promo ? '🔥' : p.novo ? '✨' : '•'} *${p.name}* — ${p.promo && p.oldPrice > p.price ? `~${money(p.oldPrice)}~ ` : ''}${money(p.price)}${p.leve2 ? ' _(o 2º sai pela metade!)_' : p.promo ? ' _(promoção!)_' : p.novo ? ' _(novidade!)_' : ''}`);
       if (p.desc) L.push(`   ${p.desc}`);
       if (p.flavors?.length) L.push(`   Sabores: ${p.flavors.join(', ')}`);
     });
@@ -685,7 +709,8 @@ function tabVenda() {
 }
 function vTotal() {
   const its = vendaItems();
-  $('#vtot').textContent = money([...document.querySelectorAll('.vq')].reduce((a, el) => a + Math.floor(Number(el.value) || 0) * its[Number(el.dataset.i)].p.price, 0));
+  const ls = [...document.querySelectorAll('.vq')].map((el) => ({ it: its[Number(el.dataset.i)], q: Math.floor(Number(el.value) || 0) })).filter((x) => x.q > 0).map(({ it, q }) => ({ productId: it.p.id, price: it.p.price, qty: q }));
+  $('#vtot').textContent = money(calcPedido(ls).totalC / 100);
 }
 async function saveVenda() {
   const its = vendaItems(), es = [...document.querySelectorAll('.vq')].map((el) => ({ it: its[Number(el.dataset.i)], q: Math.floor(Number(el.value)) })).filter((x) => x.q > 0);
@@ -693,7 +718,8 @@ async function saveVenda() {
   const pay = $('#vpay').value, date = $('#vdate').value || today(), now = Date.now();
   const when = date === today() ? now : new Date(date + 'T12:00:00').getTime();
   const items = es.map(({ it, q }) => ({ productId: it.p.id, name: it.p.name, flavor: it.flavor, price: it.p.price, cost: it.p.cost || 0, qty: q }));
-  const order = { id: uid(), customer: $('#vcli').value.trim() || 'Balcão', items, total: items.reduce((a, i) => a + i.price * i.qty, 0), status: pay === 'receber' ? 'pending' : 'paid',
+  const calc = calcPedido(items);
+  const order = { id: uid(), customer: $('#vcli').value.trim() || 'Balcão', items: calc.lines, total: calc.totalC / 100, status: pay === 'receber' ? 'pending' : 'paid',
     method: 'balcao', paidWith: pay === 'receber' ? '' : pay, createdAt: when, paidAt: pay === 'receber' ? null : when };
   try { await Store.placeOrder(order); } catch (e) { return toast(stockMsg(e) + '. Se faltou lançar produção, faça em Estoque.'); }
   toast('Venda registrada: ' + money(order.total)); render();
@@ -790,7 +816,7 @@ function tabRes() {
     (byDay[dayKey(o.createdAt)] ||= { v: 0, c: 0 }).v += o.total;
     o.items.forEach((i) => {
       const cost = i.cost || Store.data.products.find((p) => p.id === i.productId)?.cost || 0; if (!cost) semCusto = true;
-      const r = (byProd[i.name] ||= { q: 0, rev: 0, cost: 0 }); r.q += i.qty; r.rev += i.qty * i.price; r.cost += i.qty * cost; cmv += i.qty * cost;
+      const r = (byProd[i.name] ||= { q: 0, rev: 0, cost: 0 }); r.q += i.qty; r.rev += lineRev(i); r.cost += i.qty * cost; cmv += i.qty * cost;
     });
   });
   cps.forEach((c) => ((byDay[c.date] ||= { v: 0, c: 0 }).c += Number(c.value)));
@@ -840,7 +866,7 @@ function detail(kind, cat) {
   else if (kind === 'caixa') h = head('Caixa', money(sum(paid) - tot(allC)), 'recebido − compras') + '<h3>Entrou (' + money(sum(paid)) + ')</h3>' + ordRows(paid) + '<h3>Saiu (' + money(tot(allC)) + ')</h3>' + cmpRows(allC);
   else if (kind === 'lucro') {
     const by = {}; let cmv = 0;
-    os.forEach((o) => o.items.forEach((i) => { const r = (by[i.name] ||= { q: 0, rev: 0, cost: 0 }); r.q += i.qty; r.rev += i.qty * i.price; r.cost += i.qty * costOf(i); cmv += i.qty * costOf(i); }));
+    os.forEach((o) => o.items.forEach((i) => { const r = (by[i.name] ||= { q: 0, rev: 0, cost: 0 }); r.q += i.qty; r.rev += lineRev(i); r.cost += i.qty * costOf(i); cmv += i.qty * costOf(i); }));
     h = head('Lucro estimado', money(sum(os) - cmv), 'vendido ' + money(sum(os)) + ' − custo dos produtos ' + money(cmv)) +
       '<table><tr><th>Produto</th><th class="n">Qtd</th><th class="n">Vendido</th><th class="n">Custo</th><th class="n">Lucro</th></tr>' +
       Object.entries(by).sort((a, b) => b[1].rev - a[1].rev).map(([n, r]) => `<tr><td>${esc(n)}</td><td class="n">${r.q}</td><td class="n">${money(r.rev)}</td><td class="n">${r.cost ? money(r.cost) : '—'}</td><td class="n">${r.cost ? money(r.rev - r.cost) : '—'}</td></tr>`).join('') + '</table>';

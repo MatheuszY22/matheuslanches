@@ -231,3 +231,4 @@ s.velho{color:var(--mut);font-size:13px;font-weight:400;margin-right:4px}
 .tag.promo{background:var(--promo);color:#fff;font-weight:600}
 .cats .cat-promo{border-color:var(--promo);color:#ff9a86;font-weight:600}
 @media (prefers-reduced-motion:reduce){.selo-promo{animation:none}}
+.l2{color:#ff9a86;font-weight:600}.descrow{display:flex;justify-content:space-between;color:#ff9a86;padding:8px 0}.l2dica{color:#ff9a86}
