@@ -654,7 +654,7 @@ function tabAnun() {
     ${grupos.map(([c, ps]) => `<h3 class="cath">${esc(c)}</h3>${ps.map((p) => `<label class="chk"><input type="checkbox" ${anunMarcado(p) ? 'checked' : ''} onchange="S.anun.sel['${p.id}']=this.checked;anunAtualiza()"><span>${esc(p.name)}<small>${money(p.price)}</small></span></label>`).join('')}`).join('') || '<p class="empty">Nenhum produto ativo.</p>'}
   </div>
   <div class="panel"><h3>Mensagem</h3><textarea id="anutxt" rows="14" style="width:100%;font:inherit"></textarea>
-    <div class="stack"><button class="btn" onclick="anunCopiar()">Copiar mensagem</button><button class="btn sec" onclick="anunZap()">Abrir no WhatsApp</button><button class="btn sec" onclick="anunPdf()">Exportar em PDF</button></div></div>`;
+    <div class="stack"><button class="btn" onclick="anunCopiar()">Copiar mensagem</button><button class="btn sec" onclick="anunZap()">Abrir no WhatsApp</button><button class="btn sec" onclick="anunPdf()">Exportar em PDF</button><button class="btn sec" onclick="flyerPromo()">Flyer das promoções (imagem)</button></div></div>`;
   anunAtualiza();
 }
 // PDF: abre uma página limpa de cardápio e chama a impressão do aparelho (escolher "Salvar como PDF")
@@ -683,6 +683,59 @@ function anunPdf() {
   if (!w) return toast('O navegador bloqueou a janela. Permita pop-ups e tente de novo.');
   w.document.open(); w.document.write(html); w.document.close();
   setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 700);
+}
+/* Flyer das promoções: desenha uma imagem (PNG) para mandar no grupo */
+const flyerImg = (src) => new Promise((res) => { if (!src) return res(null); const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
+function rrect(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+function fit(c, txt, maxW) { const w = c.measureText(txt).width; if (w <= maxW) return txt; let t = txt; while (t.length > 1 && c.measureText(t + '…').width > maxW) t = t.slice(0, -1); return t + '…'; }
+async function flyerPromo() {
+  const ps = Store.data.products.filter((p) => p.promo && p.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+  if (!ps.length) return toast('Marque ao menos um produto como promoção');
+  try { await Promise.all([document.fonts.load('700 60px "Cormorant Garamond"'), document.fonts.load('600 30px Jost')]); } catch (e) {}
+  const W = 1080, rowH = 200, gap = 22, headH = 560, footH = 380, H = headH + ps.length * (rowH + gap) + footH;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d');
+  const SERIF = '"Cormorant Garamond", Georgia, serif', SANS = 'Jost, Arial, sans-serif';
+  const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#1b140a'); g.addColorStop(1, '#0b0a08'); c.fillStyle = g; c.fillRect(0, 0, W, H);
+  const rg = c.createRadialGradient(W / 2, 220, 20, W / 2, 220, 620); rg.addColorStop(0, 'rgba(232,87,63,.35)'); rg.addColorStop(1, 'rgba(232,87,63,0)'); c.fillStyle = rg; c.fillRect(0, 0, W, 760);
+  c.strokeStyle = '#d4b36a'; c.lineWidth = 6; rrect(c, 24, 24, W - 48, H - 48, 28); c.stroke();
+  c.textAlign = 'center';
+  const logo = await flyerImg('logo.png');
+  if (logo) { c.save(); c.beginPath(); c.arc(W / 2, 150, 100, 0, 7); c.clip(); c.drawImage(logo, W / 2 - 100, 50, 200, 200); c.restore(); c.strokeStyle = '#d4b36a'; c.lineWidth = 4; c.beginPath(); c.arc(W / 2, 150, 102, 0, 7); c.stroke(); }
+  c.fillStyle = '#e9d39a'; c.font = '600 34px ' + SANS; c.fillText('L&M LANCHES', W / 2, 300);
+  const bg = c.createLinearGradient(140, 0, W - 140, 0); bg.addColorStop(0, '#ff7a59'); bg.addColorStop(1, '#e8573f'); c.fillStyle = bg; rrect(c, 140, 335, W - 280, 175, 30); c.fill();
+  c.fillStyle = '#fff'; c.font = '700 104px ' + SERIF; c.fillText('PROMOÇÃO', W / 2, 432);
+  c.font = '600 28px ' + SANS; c.fillText(ps.length > 1 ? 'APROVEITE ESSAS OFERTAS' : 'APROVEITE ESSA OFERTA', W / 2, 482);
+  let y = headH;
+  for (const p of ps) {
+    c.fillStyle = '#241b0e'; rrect(c, 60, y, W - 120, rowH, 24); c.fill(); c.strokeStyle = '#e8573f'; c.lineWidth = 3; c.stroke();
+    const ph = await flyerImg(p.photo), px = 80, py = y + 20, ps2 = rowH - 40;
+    if (ph) { c.save(); rrect(c, px, py, ps2, ps2, 18); c.clip(); c.drawImage(ph, px, py, ps2, ps2); c.restore(); }
+    const tx = ph ? px + ps2 + 30 : px + 10, tw = W - 60 - 30 - tx - 270;
+    c.textAlign = 'left'; c.fillStyle = '#f3ebdb'; c.font = '700 48px ' + SERIF; c.fillText(fit(c, p.name, tw), tx, y + 70);
+    c.font = '400 26px ' + SANS; c.fillStyle = '#aaa191'; if (p.desc) c.fillText(fit(c, p.desc, tw), tx, y + 108);
+    if (p.leve2) { c.fillStyle = '#ff9a86'; c.font = '600 27px ' + SANS; c.fillText('Compre 1, o 2º sai pela metade!', tx, y + (p.desc ? 150 : 120)); }
+    c.textAlign = 'right'; const rx = W - 90;
+    if (p.oldPrice > p.price) { c.fillStyle = '#aaa191'; c.font = '400 32px ' + SANS; const t = money(p.oldPrice), w = c.measureText(t).width; c.fillText(t, rx, y + 70); c.fillRect(rx - w, y + 58, w, 3); }
+    c.fillStyle = '#e9d39a'; c.font = '700 70px ' + SERIF; c.fillText(money(p.price), rx, y + (p.leve2 ? 128 : 140));
+    if (p.leve2) { c.fillStyle = '#ff9a86'; c.font = '600 26px ' + SANS; c.fillText('2º por ' + money((centavos(p.price) - descUn(p.price)) / 100), rx, y + 168); }
+    c.textAlign = 'center'; y += rowH + gap;
+  }
+  const base = location.origin + location.pathname;
+  try { const q = qrcode(0, 'M'); q.addData(base); q.make(); const qi = await flyerImg(q.createDataURL(8, 2)); if (qi) { c.fillStyle = '#fff'; rrect(c, 60, y + 20, 250, 250, 16); c.fill(); c.drawImage(qi, 66, y + 26, 238, 238); } } catch (e) {}
+  c.textAlign = 'left'; c.fillStyle = '#e9d39a'; c.font = '700 44px ' + SERIF; c.fillText('Peça pelo celular', 350, y + 90);
+  c.fillStyle = '#f3ebdb'; c.font = '500 28px ' + SANS; c.fillText('Aponte a câmera para o QR code', 350, y + 140); c.fillText('ou acesse o link abaixo:', 350, y + 180);
+  c.fillStyle = '#ffb4a2'; c.font = '600 26px ' + SANS; c.fillText(fit(c, base.split('://').pop(), W - 350 - 70), 350, y + 232);
+  c.textAlign = 'center'; c.fillStyle = '#aaa191'; c.font = '400 24px ' + SANS; c.fillText('Pagamento por Pix ou cartão · Promoção por tempo limitado', W / 2, H - 60);
+  window.__flyer = cv.toDataURL('image/png');
+  modal('<h2>Flyer das promoções</h2><p class="lead">Confira a imagem e envie no grupo.</p><img src="' + window.__flyer + '" alt="Flyer" style="width:100%;border-radius:12px"><div class="stack"><button class="btn" onclick="flyerEnviar()">Enviar / compartilhar</button><button class="btn sec" onclick="flyerBaixar()">Baixar imagem</button><button class="btn sec" onclick="closeModal()">Fechar</button></div>');
+}
+function flyerBaixar() { const a = document.createElement('a'); a.href = window.__flyer; a.download = 'promocao-lm-lanches-' + today() + '.png'; document.body.appendChild(a); a.click(); a.remove(); toast('Imagem baixada'); }
+async function flyerEnviar() {
+  try {
+    const blob = await (await fetch(window.__flyer)).blob(), file = new File([blob], 'promocao-lm-lanches.png', { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) return await navigator.share({ files: [file], text: 'Promoção L&M Lanches' });
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  flyerBaixar(); toast('Imagem baixada: anexe no grupo');
 }
 function anunCopiar() { navigator.clipboard.writeText($('#anutxt').value).then(() => toast('Mensagem copiada! Cole no grupo.'), () => { $('#anutxt').select(); toast('Selecione e copie o texto'); }); }
 function anunZap() { window.open('https://wa.me/?text=' + encodeURIComponent($('#anutxt').value), '_blank'); }
