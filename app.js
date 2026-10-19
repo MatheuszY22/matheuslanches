@@ -239,7 +239,7 @@ function irCat(id) { const el = document.getElementById(id); if (el) window.scro
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
 /* Avaliação do cliente: aparece uma vez por pessoa (depois de responder, nunca mais).
    TESTE: só para os usuários listados em AVAL_USERS (chave = nome sem acento, minúsculo). Para liberar a todos, AVAL_USERS = null. */
-const AVAL_USERS = ['teuz'];
+const AVAL_USERS = null; // liberado para todos (antes: só ['teuz'] em teste)
 const LEGENDA_ESTRELA = ['', 'Ruim', 'Regular', 'Bom', 'Muito bom', 'Excelente'];
 async function avalCheck() {
   if (S.admin || !S.user || !S.profile || sessionStorage.getItem('lanche-aval-ok')) return promoPopup();
