@@ -232,3 +232,4 @@ s.velho{color:var(--mut);font-size:13px;font-weight:400;margin-right:4px}
 .cats .cat-promo{border-color:var(--promo);color:#ff9a86;font-weight:600}
 @media (prefers-reduced-motion:reduce){.selo-promo{animation:none}}
 .l2{color:#ff9a86;font-weight:600}.descrow{display:flex;justify-content:space-between;color:#ff9a86;padding:8px 0}.l2dica{color:#ff9a86}
+.estrelas{display:flex;gap:6px;justify-content:center;margin:6px 0}.estrelas button{font-size:44px;line-height:1;background:none;border:0;color:var(--mut2);padding:2px 6px;cursor:pointer}.estrelas button.on{color:var(--gold)}.estr-leg{text-align:center}

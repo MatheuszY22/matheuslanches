@@ -37,7 +37,7 @@ const stockItems = () => Store.data.products.filter(isTracked).sort((a, b) => a.
 
 /* ---------- Armazenamento: local (padrão) ou Firestore (se config.js tiver FIREBASE_CONFIG) ---------- */
 const Store = {
-  data: { products: [], orders: [], customers: [], stock: [], purchases: [], stockLog: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
+  data: { products: [], orders: [], customers: [], stock: [], purchases: [], stockLog: [], reviews: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
   cloud: !!window.FIREBASE_CONFIG,
   fs: null, onChange: () => {}, ordersUnsub: null,
   init() {
@@ -54,8 +54,8 @@ const Store = {
   },
   watchOrders() { // só o administrador assina os pedidos
     if (!this.cloud || this.ordersUnsub) return;
-    this.ordersUnsub = ['orders', 'purchases', 'stockLog', 'customers'].map((col) =>
-      this.fs.collection(col).onSnapshot((s) => { this.data[col] = s.docs.map((d) => d.data()); this.onChange(); }));
+    this.ordersUnsub = ['orders', 'purchases', 'stockLog', 'customers', 'reviews'].map((col) =>
+      this.fs.collection(col).onSnapshot((s) => { this.data[col] = s.docs.map((d) => d.data()); this.onChange(); }, () => {}));
   },
   /* Mexe no estoque e grava outros documentos (pedido, histórico) de uma vez só.
      deltas: [{ id, productId, flavor, name, delta }]; falha inteira se algum item ficar negativo. */
@@ -219,7 +219,7 @@ async function registerCustomer() {
     await Store.put('customers', c); enterCustomer(c);
   } catch (e) { toast('Não foi possível cadastrar. Tente de novo.'); }
 }
-function logout() { sessionStorage.removeItem('lanche-promo-visto'); S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.openOrders = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
+function logout() { sessionStorage.removeItem('lanche-promo-visto'); sessionStorage.removeItem('lanche-aval-ok'); S.user = ''; S.profile = null; S.admin = false; S.cart = []; S.openOrders = []; S.step = 'nome'; localStorage.removeItem('lanche-sess'); sessionStorage.removeItem('lanche-admin'); render(); }
 /* --- categorias: o cardápio e a lista de produtos ficam separados por tipo, nesta ordem --- */
 const CAT_COMBO = 'Combos', CAT_ENC = 'Encomendas';
 const CATP = [CAT_COMBO, 'Entradas', 'Refeições', 'Lanches', 'Acompanhamentos', 'Bebidas', 'Sobremesas', 'Cafés', 'Outros', CAT_ENC];
@@ -237,6 +237,51 @@ const allCats = () => [...new Set(CATP.concat(Store.data.products.map(catOf)))];
 function irCat(id) { const el = document.getElementById(id); if (el) window.scrollTo({ top: el.offsetTop - 132, behavior: 'smooth' }); }
 /* --- cliente --- */
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
+/* Avaliação do cliente: aparece uma vez por pessoa (depois de responder, nunca mais).
+   TESTE: só para os usuários listados em AVAL_USERS (chave = nome sem acento, minúsculo). Para liberar a todos, AVAL_USERS = null. */
+const AVAL_USERS = ['teuz'];
+const LEGENDA_ESTRELA = ['', 'Ruim', 'Regular', 'Bom', 'Muito bom', 'Excelente'];
+async function avalCheck() {
+  if (S.admin || !S.user || !S.profile || sessionStorage.getItem('lanche-aval-ok')) return promoPopup();
+  if (!$('#modal').classList.contains('hidden') || S.avalBusy) return;
+  S.avalBusy = true; let ok = !AVAL_USERS || AVAL_USERS.includes(S.profile.id);
+  try { if (ok) { const f = await Store.getCustomer(S.profile.id); if (f?.avaliou) ok = false; } } catch (e) { ok = false; }
+  S.avalBusy = false; sessionStorage.setItem('lanche-aval-ok', '1');
+  if (ok && $('#modal').classList.contains('hidden')) return avalModal();
+  promoPopup();
+}
+function avalModal() {
+  S.aval = { stars: 0 };
+  modal(`<h2>Como foi sua experiência?</h2><p class="lead">Olá, ${esc(S.user)}! Sua opinião nos ajuda a melhorar.</p>
+    <div class="estrelas" id="estrelas">${[1, 2, 3, 4, 5].map((n) => `<button type="button" aria-label="${n} estrela(s)" onclick="avalStar(${n})">★</button>`).join('')}</div><p class="hint estr-leg" id="estleg">Toque nas estrelas</p>
+    <label class="lbl" for="asug">Que lanche você gostaria de ver no cardápio?</label><input id="asug" maxlength="120" placeholder="Ex.: X-bacon, esfiha, açaí...">
+    <label class="lbl" for="acom">Comentário (elogio, reclamação ou sugestão)</label><textarea id="acom" rows="4" maxlength="600" style="width:100%;font:inherit" placeholder="Conte o que achou, ou avise se algo estiver ruim"></textarea>
+    <div class="stack"><button class="btn" onclick="avalEnviar()">Enviar avaliação</button><button class="btn sec" onclick="avalDepois()">Agora não</button></div>`);
+}
+function avalStar(n) {
+  S.aval.stars = n;
+  document.querySelectorAll('#estrelas button').forEach((b, i) => b.classList.toggle('on', i < n));
+  $('#estleg').textContent = n + ' de 5 · ' + LEGENDA_ESTRELA[n];
+}
+function avalDepois() { closeModal(); promoPopup(); } // adia: pergunta de novo no próximo acesso
+async function avalEnviar() {
+  if (!S.aval?.stars) return toast('Escolha de 1 a 5 estrelas');
+  const r = { id: uid(), customerId: S.profile.id, customer: S.user, stars: S.aval.stars, suggestion: $('#asug').value.trim(), comment: $('#acom').value.trim(), createdAt: Date.now() };
+  try {
+    await Store.put('reviews', r);
+    const c = { ...S.profile, avaliou: true, avaliouEm: Date.now() }; await Store.put('customers', c); S.profile = c; localStorage.setItem('lanche-sess', JSON.stringify(c));
+  } catch (e) { return toast('Não foi possível enviar agora. Tente de novo.'); }
+  modal(`<h2>${ICON.check} Obrigado!</h2><p>Sua avaliação foi enviada. Isso ajuda muito a lanchonete.</p><button class="btn" onclick="closeModal();promoPopup()">Ok</button>`);
+}
+function tabAval() {
+  const rs = Store.data.reviews.slice().sort((a, b) => b.createdAt - a.createdAt), n = rs.length, med = n ? rs.reduce((a, r) => a + r.stars, 0) / n : 0;
+  const dist = [5, 4, 3, 2, 1].map((k) => [k, rs.filter((r) => r.stars === k).length]);
+  $('#tab').innerHTML = `<div class="cards"><div class="stat"><span>Nota média</span><b>${n ? med.toFixed(1).replace('.', ',') + ' ★' : '—'}</b></div><div class="stat"><span>Avaliações</span><b>${n}</b></div></div>
+    <div class="panel"><h3>Notas</h3>${dist.map(([k, q]) => `<div class="tp"><div class="row plain"><span>${k} ★</span><small>${q}</small></div><div class="bar"><i style="width:${n ? (q / n) * 100 : 0}%"></i></div></div>`).join('')}</div>
+    <div class="panel"><h3>Sugestões de lanche</h3>${rs.filter((r) => r.suggestion).map((r) => `<div class="row"><span>${esc(r.suggestion)}</span><small>${esc(r.customer)}</small></div>`).join('') || '<p class="empty">Nenhuma sugestão ainda.</p>'}</div>
+    <h3 class="cath">Comentários</h3>${rs.map((r) => `<div class="panel${r.stars <= 2 ? ' conf' : ''}"><div class="row plain"><b class="c-gold">${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}</b><small>${esc(r.customer)} · ${new Date(r.createdAt).toLocaleString('pt-BR')}</small></div>${r.comment ? `<p>${esc(r.comment)}</p>` : '<small>Sem comentário</small>'}</div>`).join('') || '<p class="empty">Nenhuma avaliação ainda.</p>'}`;
+}
+
 /* Ao entrar no usuário, mostra as promoções uma vez por sessão (espera os produtos carregarem e nenhuma outra janela aberta) */
 function promoPopup() {
   if (S.admin || !S.user || sessionStorage.getItem('lanche-promo-visto') || !$('#modal').classList.contains('hidden')) return;
@@ -259,7 +304,7 @@ function renderMenu() {
     ${novos.length ? `<h2 class="cath novidades" id="cat-novidades">✨ Novidades</h2><div class="grid">${novos.map(card).join('')}</div>` : ''}
     ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2>${c === CAT_ENC ? '<p class="hint enc-hint">Feitos sob encomenda: escolha a data de retirada ao finalizar. Encomendas são pedidas separadas dos demais itens.</p>' : ''}<div class="grid">${ps.map(card).join('')}</div>`).join('')}<div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>${ICON.bag} ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
-  promoPopup();
+  avalCheck();
 }
 /* Promoção "leve 2": em cada par de unidades do mesmo produto (sabores se somam), a 2ª sai pela metade.
    Retorna as linhas com dq (unidades com desconto) e o total em centavos: tudo em centavos para fechar exato. */
@@ -484,10 +529,10 @@ async function clientePagou(id) {
 
 /* --- administrador --- */
 function renderAdmin() {
-  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['enc', 'Encomendas'], ['anun', 'Anúncio'], ['cli', 'Clientes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
+  const tabs = [['rel', 'Relatórios'], ['res', 'Resultado'], ['vf', 'Venda por fora'], ['prazo', 'Pendentes'], ['enc', 'Encomendas'], ['anun', 'Anúncio'], ['aval', 'Avaliações'], ['cli', 'Clientes'], ['est', 'Estoque'], ['cmp', 'Compras'], ['prod', 'Produtos'], ['cfg', 'Pix'], ['qr', 'QR do cardápio']];
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">Painel de gestão</span><h1>${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div><div class="wrap">
     <div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${t}</button>`).join('')}</div><div id="tab"></div></div>`;
-  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, enc: tabEnc, anun: tabAnun, cli: tabCli, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
+  ({ rel: tabRel, res: tabRes, vf: tabVenda, prazo: tabPrazo, enc: tabEnc, anun: tabAnun, aval: tabAval, cli: tabCli, est: tabEst, cmp: tabCmp, prod: tabProd, cfg: tabCfg, qr: tabQr })[S.tab]();
 }
 function tabRel() {
   const r = S.range, now = Date.now();
