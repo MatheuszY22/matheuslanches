@@ -347,6 +347,7 @@ function openCart() {
   if (!S.cart.length) return closeModal();
   modal(`<h2>Seu pedido</h2>${S.cart.map((i, k) => `<div class="row"><div><span class="nm">${esc(i.name)}</span>${i.flavor ? ` <small>(${esc(i.flavor)})</small>` : ''}<br><small>${money(i.price)}</small></div>
     <div class="qty"><button onclick="qty(${k},-1)" aria-label="Menos">−</button>${i.qty}<button onclick="qty(${k},1)" aria-label="Mais">+</button></div></div>`).join('')}
+    ${S.openOrders.filter((o) => !o.clientPaid).map((o) => `<div class="aviso-aberto"><b>Atenção:</b> você tem um pedido anterior em aberto: ${itemsText(o)} · <b>${money(o.total)}</b>. Ele <b>não</b> está neste carrinho. <a href="#" onclick="cancelOpen('${o.id}');return false">Cancelar o anterior</a></div>`).join('')}
     ${l2Falta().map((n) => `<p class="hint l2dica">Adicione mais 1 <b>${esc(n)}</b>: o 2º sai pela metade do preço.</p>`).join('')}
     ${calcPedido(S.cart).descontoC ? `<div class="descrow"><span>Desconto · 2º pela metade</span><b>− ${money(calcPedido(S.cart).descontoC / 100)}</b></div>` : ''}
     ${encBox()}<div class="total"><span>Total</span><b>${money(cartTotal())}</b></div>
@@ -456,6 +457,7 @@ const openBanner = () => S.openOrders.map((o) => o.method === 'maquininha'
 function continuar(id) {
   const o = S.openOrders.find((x) => x.id === id);
   if (!o) return;
+  if (!confirm('Você vai pagar o pedido ANTERIOR: ' + o.items.map((i) => i.qty + '× ' + i.name).join(', ') + ' — valor ' + money(o.total) + '. Confirma?')) return;
   if (o.method === 'infinitepay' && o.payUrl) { location.href = o.payUrl; return; }
   closeModal(); pixModal(o);
 }
@@ -492,10 +494,14 @@ async function cancelOpen(id, depois) {
 // Antes de abrir um novo pagamento online, olha se já existe um em aberto: evita pedido duplicado
 function pedidoAbertoOnline() { return S.openOrders.find((x) => (x.method === 'infinitepay' || x.method === 'pix') && !x.clientPaid); }
 function avisoDuplicado(o, method) {
-  modal(`<h2>Você já tem um pedido aguardando pagamento</h2><p class="lead">${itemsText(o)} · <b>${money(o.total)}</b></p>
-    <p class="hint">Para não duplicar, conclua esse pedido. Só cancele se quiser trocar o que pediu.</p>
-    <div class="stack"><button class="btn" onclick="continuar('${o.id}')">Continuar esse pagamento</button>
-    <button class="btn sec" onclick="cancelarETrocar('${o.id}','${method}')">Cancelar esse e fazer o pedido novo</button></div>`);
+  const novo = calcPedido(S.cart), ntxt = S.cart.map((i) => i.qty + '× ' + esc(i.name)).join(', ');
+  modal(`<h2>Atenção: você já tem um pedido em aberto</h2>
+    <div class="cmp"><div class="cmpb velho"><small>PEDIDO ANTERIOR (não pago)</small><div>${itemsText(o)}</div><b>${money(o.total)}</b></div>
+    <div class="cmpb novo"><small>PEDIDO NOVO (no carrinho)</small><div>${ntxt}</div><b>${money(novo.totalC / 100)}</b></div></div>
+    <p class="hint">Confira os valores: só um deles será cobrado, o que você escolher abaixo.</p>
+    <div class="stack"><button class="btn" onclick="cancelarETrocar('${o.id}','${method}')">Cancelar o anterior e pagar o NOVO (${money(novo.totalC / 100)})</button>
+    <button class="btn sec" onclick="continuar('${o.id}')">Pagar só o ANTERIOR (${money(o.total)})</button>
+    <button class="btn sec" onclick="closeModal()">Voltar</button></div>`);
 }
 async function cancelarETrocar(id, method) {
   if (!confirm('Cancelar o pedido anterior? Se você já pagou, não cancele: fale com o Matheus.')) return;
@@ -506,7 +512,7 @@ function pixModal(x) {
   if (!o) return;
   const code = pixPayload({ key: st.pixKey, name: st.pixName, city: st.pixCity, amount: o.total, txid: o.id });
   let qr = ''; try { const q = qrcode(0, 'M'); q.addData(code); q.make(); qr = q.createImgTag(5, 8); } catch (e) {}
-  modal(`<h2>Pague com Pix</h2><div class="total"><span>Total</span><b>${money(o.total)}</b></div><div class="qrwrap">${qr}</div>
+  modal(`<h2>Pague com Pix</h2><p class="lead">Você está pagando: <b>${itemsText(o)}</b></p><div class="total"><span>Total deste Pix</span><b>${money(o.total)}</b></div><div class="qrwrap">${qr}</div>
     <div class="pix" id="pixcode">${code}</div>
     <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('pixcode').textContent).then(()=>toast('Pix copiado!'))">Copiar Pix copia e cola</button>
     <div class="ask"><p><b>Deu certo o pagamento?</b></p><div class="stack"><button class="btn ok" onclick="clientePagou('${o.id}')">Sim, já paguei</button><button class="btn sec" onclick="aindaNao()">Ainda não</button></div></div>
