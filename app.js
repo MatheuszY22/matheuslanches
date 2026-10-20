@@ -40,13 +40,19 @@ const Store = {
   data: { products: [], orders: [], customers: [], stock: [], purchases: [], stockLog: [], reviews: [], settings: { pixKey: '', pixName: '', pixCity: '' } },
   cloud: !!window.FIREBASE_CONFIG,
   fs: null, onChange: () => {}, ordersUnsub: null,
+  /* Data de corte ("zerar tudo"): pedidos, compras e lançamentos de estoque anteriores a settings.resetAt
+     continuam guardados no banco, mas não entram em relatórios, pendentes nem no resultado. */
+  raw: {},
+  setCol(col, docs) { this.raw[col] = docs; this.data[col] = this.cut(col, docs); },
+  cut(col, docs) { const t = this.data.settings.resetAt || 0; return t && ['orders', 'purchases', 'stockLog'].includes(col) ? docs.filter((x) => (x.createdAt || 0) >= t) : docs; },
+  recut() { ['orders', 'purchases', 'stockLog'].forEach((c) => { if (this.raw[c]) this.data[c] = this.cut(c, this.raw[c]); }); },
   init() {
     if (this.cloud) {
       firebase.initializeApp(window.FIREBASE_CONFIG);
       this.fs = firebase.firestore();
       this.fs.collection('products').onSnapshot((s) => { this.data.products = s.docs.map((d) => d.data()); this.onChange(); });
       this.fs.collection('stock').onSnapshot((s) => { this.data.stock = s.docs.map((d) => d.data()); this.onChange(); });
-      this.fs.doc('config/main').onSnapshot((d) => { if (d.exists) this.data.settings = { ...this.data.settings, ...d.data() }; this.onChange(); });
+      this.fs.doc('config/main').onSnapshot((d) => { if (d.exists) this.data.settings = { ...this.data.settings, ...d.data() }; this.recut(); this.onChange(); });
     } else {
       try { Object.assign(this.data, JSON.parse(localStorage.getItem(LS) || '{}')); } catch (e) {}
       addEventListener('storage', () => { try { Object.assign(this.data, JSON.parse(localStorage.getItem(LS) || '{}')); this.onChange(); } catch (e) {} });
@@ -55,7 +61,7 @@ const Store = {
   watchOrders() { // só o administrador assina os pedidos
     if (!this.cloud || this.ordersUnsub) return;
     this.ordersUnsub = ['orders', 'purchases', 'stockLog', 'customers', 'reviews'].map((col) =>
-      this.fs.collection(col).onSnapshot((s) => { this.data[col] = s.docs.map((d) => d.data()); this.onChange(); }, () => {}));
+      this.fs.collection(col).onSnapshot((s) => { this.setCol(col, s.docs.map((d) => d.data())); this.onChange(); }, () => {}));
   },
   /* Mexe no estoque e grava outros documentos (pedido, histórico) de uma vez só.
      deltas: [{ id, productId, flavor, name, delta }]; falha inteira se algum item ficar negativo. */
