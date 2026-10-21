@@ -254,15 +254,64 @@ addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pwaEvento =
 function pwaMostrar() { return !S.admin && !!S.profile && (!PWA_USERS || PWA_USERS.includes(S.profile.id)) && !pwaInstalado() && !pwaDispensado(); }
 const pwaBanner = () => (pwaMostrar() ? `<div class="aberto pwa"><div><b>📲 Instale o app na sua tela inicial</b><br><small>Abre mais rápido e sem a barra do navegador</small></div><div class="acts"><button class="btn sm" onclick="pwaGuia()">Ver como</button><button class="btn sec sm" onclick="pwaDispensar()" aria-label="Fechar aviso">✕</button></div></div>` : '');
 function pwaDispensar() { try { localStorage.setItem('lanche-pwa-dispensado', '1'); } catch (e) {} render(); }
-function pwaGuia(so) {
-  const ios = so ? so === 'ios' : pwaIOS(), passo = (n, t) => `<li><span class="n">${n}</span><div>${t}</div></li>`;
-  const iph = `<ol class="passos">${passo(1, 'Abra este site no <b>Safari</b> (o navegador azul com bússola). Se abriu pelo WhatsApp ou Instagram, toque em <b>⋯</b> e em <b>Abrir no Safari</b>.')}${passo(2, 'Toque no botão <b>Compartilhar</b>: um quadrado com uma seta para cima, na barra de baixo da tela.')}${passo(3, 'Role a lista e toque em <b>Adicionar à Tela de Início</b>.')}${passo(4, 'Toque em <b>Adicionar</b>, no canto de cima. O ícone da L&amp;M aparece na sua tela.')}</ol>`;
-  const and = `<ol class="passos">${passo(1, 'Abra este site no <b>Chrome</b>. Se abriu pelo WhatsApp ou Instagram, toque em <b>⋮</b> e em <b>Abrir no navegador</b>.')}${passo(2, 'Toque nos <b>três pontinhos ⋮</b>, no canto de cima da tela.')}${passo(3, 'Toque em <b>Instalar aplicativo</b> (ou <b>Adicionar à tela inicial</b>).')}${passo(4, 'Toque em <b>Instalar</b> ou <b>Adicionar</b>. O ícone da L&amp;M aparece na sua tela.')}</ol>`;
-  modal(`<h2>📲 Coloque a L&amp;M na sua tela</h2><p class="lead">Fica como um aplicativo: um toque e você já pede.</p>
+/* ---- Ilustrações do passo a passo (desenhos em SVG, sem imagens externas) ---- */
+const svgTela = (inner) => `<svg viewBox="0 0 240 320" class="pwa-svg" role="img" aria-label="Ilustração do passo"><rect x="20" y="8" width="200" height="304" rx="32" fill="#0b0b0b" stroke="#5a5a5a" stroke-width="3"/><rect x="29" y="17" width="182" height="286" rx="25" fill="#f5f5f7"/>${inner}</svg>`;
+const svgAnel = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="#e8573f" stroke-width="4"><animate attributeName="stroke-opacity" values="1;.2;1" dur="1.3s" repeatCount="indefinite"/></circle>`;
+const svgTxt = (x, y, t, o = '') => `<text x="${x}" y="${y}" font-family="Arial,sans-serif" font-size="9.5" fill="#222" ${o}>${t}</text>`;
+const svgPagina = () => `<image href="icon-192.png" x="95" y="70" width="50" height="50"/><rect x="62" y="132" width="116" height="8" rx="4" fill="#d6d6db"/><rect x="74" y="148" width="92" height="8" rx="4" fill="#e1e1e6"/><rect x="50" y="176" width="140" height="34" rx="10" fill="#ececf0"/>`;
+const svgCunha = (cx, cy, r, a0, a1, cor) => { const p = (a) => [cx + r * Math.cos((a * Math.PI) / 180), cy + r * Math.sin((a * Math.PI) / 180)].map((n) => n.toFixed(1)); const [x0, y0] = p(a0), [x1, y1] = p(a1); return `<path d="M${cx} ${cy} L${x0} ${y0} A${r} ${r} 0 0 1 ${x1} ${y1} Z" fill="${cor}"/>`; };
+const svgInicio = (android) => {
+  const cores = ['#5ac8fa', '#ff9f0a', '#34c759', '#af52de', '#ff453a', '#ffd60a', '#0a84ff', '#8e8e93'], r = android ? 18 : 9;
+  const slots = [[52, 58], [100, 58], [148, 58], [52, 108], [148, 108], [52, 158], [100, 158], [148, 158]];
+  return `<rect x="29" y="17" width="182" height="286" rx="25" fill="#1c3a6b"/>${slots.map(([x, y], i) => `<rect x="${x - (android ? 18 : 20)}" y="${y - 20}" width="40" height="40" rx="${r}" fill="${cores[i]}" opacity=".85"/>`).join('')}
+    <image href="icon-192.png" x="80" y="88" width="40" height="40" clip-path="inset(0 round ${android ? 20 : 9}px)"/>${svgAnel(100, 108, 28)}${svgTxt(100, 146, 'L&amp;M Lanches', 'text-anchor="middle" fill="#fff" font-size="8.5"')}
+    <rect x="42" y="262" width="156" height="32" rx="${android ? 16 : 12}" fill="#ffffff" opacity=".25"/>`;
+};
+const PWA_PASSOS = {
+  ios: [
+    { t: 'Abra no Safari', d: 'Abra este site no <b>Safari</b>, o navegador com o ícone de bússola. Se abriu pelo WhatsApp ou Instagram, toque em <b>⋯</b> e em <b>Abrir no Safari</b>.',
+      svg: () => svgTela(`<circle cx="120" cy="130" r="42" fill="#1e90ff"/><circle cx="120" cy="130" r="35" fill="none" stroke="#fff" stroke-width="3"/><polygon points="120,100 128,130 120,160 112,130" fill="#fff" transform="rotate(40 120 130)"/><polygon points="120,100 128,130 112,130" fill="#ff3b30" transform="rotate(40 120 130)"/>${svgTxt(120, 198, 'Safari', 'text-anchor="middle" font-size="12" font-weight="bold"')}<rect x="44" y="236" width="152" height="26" rx="13" fill="#e3e3e8"/>${svgTxt(120, 253, 'matheuszy22.github.io', 'text-anchor="middle" font-size="9"')}${svgAnel(120, 130, 52)}`) },
+    { t: 'Toque em Compartilhar', d: 'É o botão com um <b>quadrado e uma seta para cima</b>, na barra de baixo da tela.',
+      svg: () => svgTela(`${svgPagina()}<rect x="44" y="226" width="152" height="22" rx="11" fill="#e3e3e8"/>${svgTxt(120, 241, 'matheuszy22.github.io', 'text-anchor="middle" font-size="9"')}<rect x="29" y="256" width="182" height="47" fill="#f9f9fb"/>
+        <path d="M60 270 l-8 8 l8 8" fill="none" stroke="#9aa0a6" stroke-width="2.5" stroke-linecap="round"/><path d="M92 270 l8 8 l-8 8" fill="none" stroke="#9aa0a6" stroke-width="2.5" stroke-linecap="round"/>
+        <g fill="none" stroke="#007aff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="113" y="273" width="16" height="15" rx="3"/><path d="M121 279 V262 M115 268 l6 -6 l6 6"/></g>
+        <rect x="153" y="271" width="16" height="14" rx="2" fill="none" stroke="#9aa0a6" stroke-width="2"/><rect x="183" y="272" width="12" height="12" rx="2" fill="none" stroke="#9aa0a6" stroke-width="2"/>${svgAnel(121, 277, 20)}`) },
+    { t: 'Adicionar à Tela de Início', d: 'Role a lista para cima e toque em <b>Adicionar à Tela de Início</b>.',
+      svg: () => svgTela(`<rect x="29" y="17" width="182" height="286" rx="25" fill="#8e8e93" opacity=".55"/><rect x="29" y="96" width="182" height="207" rx="22" fill="#f5f5f7"/>
+        <image href="icon-192.png" x="40" y="106" width="28" height="28"/>${svgTxt(76, 118, 'L&amp;M Lanches', 'font-weight="bold"')}${svgTxt(76, 130, 'matheuszy22.github.io', 'font-size="8" fill="#777"')}
+        ${[['Copiar', 160], ['Adicionar aos Favoritos', 188], ['Adicionar à Tela de Início', 216], ['Imprimir', 244]].map(([t, y], i) => `<rect x="38" y="${y - 14}" width="164" height="26" rx="8" fill="${i === 2 ? '#fff0ea' : '#fff'}"/>${svgTxt(46, y + 2, t, i === 2 ? 'font-weight="bold"' : '')}<rect x="182" y="${y - 6}" width="12" height="12" rx="3" fill="none" stroke="#555" stroke-width="1.6"/>`).join('')}<rect x="35" y="199" width="170" height="32" rx="10" fill="none" stroke="#e8573f" stroke-width="4"><animate attributeName="stroke-opacity" values="1;.2;1" dur="1.3s" repeatCount="indefinite"/></rect>`) },
+    { t: 'Toque em Adicionar', d: 'Fica no <b>canto de cima, à direita</b>. Se quiser, dá para mudar o nome do ícone.',
+      svg: () => svgTela(`<rect x="29" y="17" width="182" height="286" rx="25" fill="#f0f0f4"/><rect x="29" y="17" width="182" height="40" rx="25" fill="#fafafa"/>${svgTxt(40, 42, 'Cancelar', 'fill="#007aff" font-size="8.5"')}${svgTxt(108, 42, 'Tela de Início', 'text-anchor="middle" font-size="7.5" font-weight="bold"')}${svgTxt(196, 42, 'Adicionar', 'text-anchor="end" fill="#007aff" font-weight="bold"')}
+        <rect x="40" y="78" width="160" height="74" rx="12" fill="#fff"/><image href="icon-192.png" x="50" y="90" width="48" height="48"/>${svgTxt(108, 108, 'L&amp;M Lanches', 'font-weight="bold" font-size="11"')}${svgTxt(108, 124, 'matheuszy22.github.io', 'font-size="8" fill="#777"')}
+        <rect x="40" y="166" width="160" height="8" rx="4" fill="#dcdce1"/><rect x="40" y="182" width="120" height="8" rx="4" fill="#e6e6ea"/><rect x="150" y="26" width="52" height="26" rx="10" fill="none" stroke="#e8573f" stroke-width="4"><animate attributeName="stroke-opacity" values="1;.2;1" dur="1.3s" repeatCount="indefinite"/></rect>`) },
+    { t: 'Pronto!', d: 'O ícone da <b>L&amp;M Lanches</b> já está na sua tela. É só tocar nele para abrir e pedir.', svg: () => svgTela(svgInicio(false)) },
+  ],
+  android: [
+    { t: 'Abra no Chrome', d: 'Abra este site no <b>Chrome</b>. Se abriu pelo WhatsApp ou Instagram, toque em <b>⋮</b> e em <b>Abrir no navegador</b>.',
+      svg: () => svgTela(`${svgCunha(120, 130, 42, -150, -30, '#ea4335')}${svgCunha(120, 130, 42, -30, 90, '#fbbc04')}${svgCunha(120, 130, 42, 90, 210, '#34a853')}<circle cx="120" cy="130" r="19" fill="#fff"/><circle cx="120" cy="130" r="14" fill="#4285f4"/>${svgTxt(120, 198, 'Chrome', 'text-anchor="middle" font-size="12" font-weight="bold"')}<rect x="44" y="236" width="152" height="26" rx="13" fill="#e3e3e8"/>${svgTxt(120, 253, 'matheuszy22.github.io', 'text-anchor="middle" font-size="9"')}${svgAnel(120, 130, 53)}`) },
+    { t: 'Toque nos três pontinhos', d: 'Ficam no <b>canto de cima, à direita</b> da tela.',
+      svg: () => svgTela(`<rect x="29" y="17" width="182" height="42" rx="25" fill="#fff"/><rect x="38" y="26" width="132" height="24" rx="12" fill="#eceff1"/>${svgTxt(104, 42, 'matheuszy22.github.io', 'text-anchor="middle" font-size="8.5"')}<g fill="#444"><circle cx="190" cy="29" r="2.6"/><circle cx="190" cy="38" r="2.6"/><circle cx="190" cy="47" r="2.6"/></g>${svgPagina().replace(/y="70"/, 'y="92"')}${svgAnel(190, 38, 16)}`) },
+    { t: 'Instalar aplicativo', d: 'No menu, toque em <b>Instalar aplicativo</b> (ou <b>Adicionar à tela inicial</b>).',
+      svg: () => svgTela(`<rect x="29" y="17" width="182" height="42" rx="25" fill="#fff"/><rect x="38" y="26" width="132" height="24" rx="12" fill="#eceff1"/><g fill="#444"><circle cx="190" cy="29" r="2.6"/><circle cx="190" cy="38" r="2.6"/><circle cx="190" cy="47" r="2.6"/></g>
+        <rect x="84" y="56" width="124" height="158" rx="10" fill="#fff" stroke="#d6d6db" stroke-width="2"/>${[['Nova guia', 80], ['Nova guia anônima', 106], ['Histórico', 132], ['Instalar aplicativo', 158], ['Configurações', 184]].map(([t, y], i) => `${i === 3 ? '<rect x="88" y="144" width="116" height="24" rx="6" fill="#fff0ea"/>' : ''}${svgTxt(96, y + 3, t, i === 3 ? 'font-weight="bold"' : '')}`).join('')}<rect x="87" y="143" width="118" height="26" rx="7" fill="none" stroke="#e8573f" stroke-width="4"><animate attributeName="stroke-opacity" values="1;.2;1" dur="1.3s" repeatCount="indefinite"/></rect>`) },
+    { t: 'Confirme em Instalar', d: 'Toque em <b>Instalar</b>. Se aparecer outra pergunta para adicionar à tela, confirme também.',
+      svg: () => svgTela(`${svgPagina()}<rect x="29" y="17" width="182" height="286" rx="25" fill="#000" opacity=".45"/><rect x="40" y="108" width="160" height="118" rx="18" fill="#fff"/>${svgTxt(54, 132, 'Instalar app?', 'font-weight="bold" font-size="11"')}<image href="icon-192.png" x="54" y="142" width="32" height="32"/>${svgTxt(94, 156, 'L&amp;M Lanches', 'font-weight="bold"')}${svgTxt(94, 168, 'matheuszy22.github.io', 'font-size="8" fill="#777"')}${svgTxt(112, 210, 'Cancelar', 'fill="#1a73e8"')}${svgTxt(160, 210, 'Instalar', 'fill="#1a73e8" font-weight="bold"')}<rect x="152" y="196" width="46" height="22" rx="11" fill="none" stroke="#e8573f" stroke-width="4"><animate attributeName="stroke-opacity" values="1;.2;1" dur="1.3s" repeatCount="indefinite"/></rect>`) },
+    { t: 'Pronto!', d: 'O ícone da <b>L&amp;M Lanches</b> já está na sua tela. É só tocar nele para abrir e pedir.', svg: () => svgTela(svgInicio(true)) },
+  ],
+};
+function pwaGuia(os, i = 0) {
+  const ios = os ? os === 'ios' : pwaIOS(), id = ios ? 'ios' : 'android', lista = PWA_PASSOS[id], n = lista.length, p = lista[i];
+  S.pwa = { os: id, i };
+  modal(`<h2>📲 Coloque a L&amp;M na sua tela</h2>
     <p class="lbl">Qual é o seu celular?</p><div class="pwa-sel"><button class="${ios ? 'on' : ''}" onclick="pwaGuia('ios')"><span>🍎</span>iPhone</button><button class="${ios ? '' : 'on'}" onclick="pwaGuia('android')"><span>🤖</span>Android</button></div>
-    ${ios ? iph : and}
-    ${!ios && pwaEvento ? '<button class="btn" onclick="pwaInstalar()">Instalar agora</button>' : ''}
-    <div class="stack"><button class="btn sec" onclick="closeModal()">Fechar</button><button class="btn sec" onclick="pwaDispensar();closeModal()">Já instalei / não mostrar mais</button></div>`);
+    <div class="pwa-prog">${lista.map((_, k) => `<i class="${k === i ? 'on' : k < i ? 'ok' : ''}"></i>`).join('')}</div><p class="pwa-cont">Passo ${i + 1} de ${n}</p>
+    <div class="pwa-fig" id="pwafig">${p.svg()}</div><h3 class="pwa-t">${p.t}</h3><p class="pwa-d">${p.d}</p>
+    ${!ios && pwaEvento && i === 2 ? '<button class="btn" onclick="pwaInstalar()">Instalar agora com um toque</button>' : ''}
+    <div class="pwa-nav"><button class="btn sec" ${i ? '' : 'disabled'} onclick="pwaGuia('${id}',${i - 1})">← Voltar</button>${i < n - 1 ? `<button class="btn" onclick="pwaGuia('${id}',${i + 1})">Próximo →</button>` : '<button class="btn ok" onclick="pwaDispensar();closeModal()">Pronto, já instalei</button>'}</div>
+    <button class="linkbtn" onclick="closeModal()">Fechar</button>`);
+  const f = $('#pwafig'); let x0 = null; // deslizar o dedo para passar
+  f.ontouchstart = (e) => { x0 = e.touches[0].clientX; };
+  f.ontouchend = (e) => { if (x0 === null) return; const d = e.changedTouches[0].clientX - x0; x0 = null; if (d < -50 && i < n - 1) pwaGuia(id, i + 1); else if (d > 50 && i > 0) pwaGuia(id, i - 1); };
 }
 async function pwaInstalar() { if (!pwaEvento) return; pwaEvento.prompt(); try { await pwaEvento.userChoice; } catch (e) {} pwaEvento = null; closeModal(); render(); }
 
