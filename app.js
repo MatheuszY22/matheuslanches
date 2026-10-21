@@ -245,7 +245,7 @@ function irCat(id) { const el = document.getElementById(id); if (el) window.scro
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
 /* Instalar na tela inicial (passo a passo).
    TESTE: só para os usuários de PWA_USERS (chave = nome sem acento, minúsculo). Para liberar a todos, PWA_USERS = null. */
-const PWA_USERS = ['teuz'];
+const PWA_USERS = null; // liberado para todos (antes: só ['teuz'] em teste)
 const pwaInstalado = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const pwaIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const pwaDispensado = () => { try { return !!localStorage.getItem('lanche-pwa-dispensado-2'); } catch (e) { return false; } };
