@@ -243,6 +243,29 @@ const allCats = () => [...new Set(CATP.concat(Store.data.products.map(catOf)))];
 function irCat(id) { const el = document.getElementById(id); if (el) window.scrollTo({ top: el.offsetTop - 132, behavior: 'smooth' }); }
 /* --- cliente --- */
 const out = (p) => p.active === false; // só o que a gerência pausar; estoque não limita o cliente
+/* Instalar na tela inicial (passo a passo).
+   TESTE: só para os usuários de PWA_USERS (chave = nome sem acento, minúsculo). Para liberar a todos, PWA_USERS = null. */
+const PWA_USERS = ['teuz'];
+const pwaInstalado = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pwaIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const pwaDispensado = () => { try { return !!localStorage.getItem('lanche-pwa-dispensado'); } catch (e) { return false; } };
+let pwaEvento = null; // evento do Chrome que permite instalar com um toque (Android)
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pwaEvento = e; });
+function pwaMostrar() { return !S.admin && !!S.profile && (!PWA_USERS || PWA_USERS.includes(S.profile.id)) && !pwaInstalado() && !pwaDispensado(); }
+const pwaBanner = () => (pwaMostrar() ? `<div class="aberto pwa"><div><b>📲 Instale o app na sua tela inicial</b><br><small>Abre mais rápido e sem a barra do navegador</small></div><div class="acts"><button class="btn sm" onclick="pwaGuia()">Ver como</button><button class="btn sec sm" onclick="pwaDispensar()" aria-label="Fechar aviso">✕</button></div></div>` : '');
+function pwaDispensar() { try { localStorage.setItem('lanche-pwa-dispensado', '1'); } catch (e) {} render(); }
+function pwaGuia(so) {
+  const ios = so ? so === 'ios' : pwaIOS(), passo = (n, t) => `<li><span class="n">${n}</span><div>${t}</div></li>`;
+  const iph = `<ol class="passos">${passo(1, 'Abra este site no <b>Safari</b> (o navegador azul com bússola). Se abriu pelo WhatsApp ou Instagram, toque em <b>⋯</b> e em <b>Abrir no Safari</b>.')}${passo(2, 'Toque no botão <b>Compartilhar</b>: um quadrado com uma seta para cima, na barra de baixo da tela.')}${passo(3, 'Role a lista e toque em <b>Adicionar à Tela de Início</b>.')}${passo(4, 'Toque em <b>Adicionar</b>, no canto de cima. O ícone da L&amp;M aparece na sua tela.')}</ol>`;
+  const and = `<ol class="passos">${passo(1, 'Abra este site no <b>Chrome</b>. Se abriu pelo WhatsApp ou Instagram, toque em <b>⋮</b> e em <b>Abrir no navegador</b>.')}${passo(2, 'Toque nos <b>três pontinhos ⋮</b>, no canto de cima da tela.')}${passo(3, 'Toque em <b>Instalar aplicativo</b> (ou <b>Adicionar à tela inicial</b>).')}${passo(4, 'Toque em <b>Instalar</b> ou <b>Adicionar</b>. O ícone da L&amp;M aparece na sua tela.')}</ol>`;
+  modal(`<h2>📲 Coloque a L&amp;M na sua tela</h2><p class="lead">Fica como um aplicativo: um toque e você já pede.</p>
+    <p class="lbl">Qual é o seu celular?</p><div class="pwa-sel"><button class="${ios ? 'on' : ''}" onclick="pwaGuia('ios')"><span>🍎</span>iPhone</button><button class="${ios ? '' : 'on'}" onclick="pwaGuia('android')"><span>🤖</span>Android</button></div>
+    ${ios ? iph : and}
+    ${!ios && pwaEvento ? '<button class="btn" onclick="pwaInstalar()">Instalar agora</button>' : ''}
+    <div class="stack"><button class="btn sec" onclick="closeModal()">Fechar</button><button class="btn sec" onclick="pwaDispensar();closeModal()">Já instalei / não mostrar mais</button></div>`);
+}
+async function pwaInstalar() { if (!pwaEvento) return; pwaEvento.prompt(); try { await pwaEvento.userChoice; } catch (e) {} pwaEvento = null; closeModal(); render(); }
+
 /* Avaliação do cliente: aparece uma vez por pessoa (depois de responder, nunca mais).
    TESTE: só para os usuários listados em AVAL_USERS (chave = nome sem acento, minúsculo). Para liberar a todos, AVAL_USERS = null. */
 const AVAL_USERS = null; // liberado para todos (antes: só ['teuz'] em teste)
@@ -305,7 +328,7 @@ function renderMenu() {
       ${out(p) ? '' : `<button class="add" onclick="event.stopPropagation();pick('${p.id}')" aria-label="Adicionar ${esc(p.name)}">${p.flavors?.length ? 'Escolher sabor' : '+ Adicionar'}</button>`}</div></div>`;
   $('#app').innerHTML = `<div class="top"><div class="brand"><img src="icon-192.png" alt="" class="mini"><div><span class="eyebrow">L&amp;M Lanches</span><h1>Olá, ${esc(S.user)}</h1></div></div><button class="ghost" onclick="logout()">Sair</button></div>
     ${grupos.length > 1 ? `<div class="cats">${promos.length ? '<button class="cat-promo" onclick="irCat(&quot;cat-promocoes&quot;)">🔥 Promoções</button>' : ''}${novos.length ? '<button class="cat-nov" onclick="irCat(&quot;cat-novidades&quot;)">✨ Novidades</button>' : ''}${grupos.map(([c]) => `<button onclick="irCat('${catId(c)}')">${esc(c)}</button>`).join('')}</div>` : ''}
-    <div class="wrap">${openBanner()}${grupos.length ? '' : '<p class="empty">Nenhum produto cadastrado ainda.</p>'}
+    <div class="wrap">${pwaBanner()}${openBanner()}${grupos.length ? '' : '<p class="empty">Nenhum produto cadastrado ainda.</p>'}
     ${promos.length ? `<h2 class="cath promocoes" id="cat-promocoes">🔥 Promoções</h2><div class="grid">${promos.map(card).join('')}</div>` : ''}
     ${novos.length ? `<h2 class="cath novidades" id="cat-novidades">✨ Novidades</h2><div class="grid">${novos.map(card).join('')}</div>` : ''}
     ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2>${c === CAT_ENC ? '<p class="hint enc-hint">Feitos sob encomenda: escolha a data de retirada ao finalizar. Encomendas são pedidas separadas dos demais itens.</p>' : ''}<div class="grid">${ps.map(card).join('')}</div>`).join('')}<div class="pad"></div></div>
