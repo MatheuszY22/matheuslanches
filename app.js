@@ -248,12 +248,13 @@ const out = (p) => p.active === false; // só o que a gerência pausar; estoque 
 const PWA_USERS = ['teuz'];
 const pwaInstalado = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const pwaIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const pwaDispensado = () => { try { return !!localStorage.getItem('lanche-pwa-dispensado'); } catch (e) { return false; } };
+const pwaDispensado = () => { try { return !!localStorage.getItem('lanche-pwa-dispensado-2'); } catch (e) { return false; } };
 let pwaEvento = null; // evento do Chrome que permite instalar com um toque (Android)
 addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pwaEvento = e; });
 function pwaMostrar() { return !S.admin && !!S.profile && (!PWA_USERS || PWA_USERS.includes(S.profile.id)) && !pwaInstalado() && !pwaDispensado(); }
+const pwaLink = () => (!S.admin && S.profile && (!PWA_USERS || PWA_USERS.includes(S.profile.id)) && !pwaInstalado() ? '<p class="pwa-foot"><a href="#" onclick="pwaGuia();return false">📲 Como colocar o app na tela do celular</a></p>' : '');
 const pwaBanner = () => (pwaMostrar() ? `<div class="aberto pwa"><div><b>📲 Instale o app na sua tela inicial</b><br><small>Abre mais rápido e sem a barra do navegador</small></div><div class="acts"><button class="btn sm" onclick="pwaGuia()">Ver como</button><button class="btn sec sm" onclick="pwaDispensar()" aria-label="Fechar aviso">✕</button></div></div>` : '');
-function pwaDispensar() { try { localStorage.setItem('lanche-pwa-dispensado', '1'); } catch (e) {} render(); }
+function pwaDispensar() { try { localStorage.setItem('lanche-pwa-dispensado-2', '1'); } catch (e) {} render(); }
 /* ---- Ilustrações do passo a passo (desenhos em SVG, sem imagens externas) ---- */
 const svgTela = (inner) => `<svg viewBox="0 0 240 320" class="pwa-svg" role="img" aria-label="Ilustração do passo"><rect x="20" y="8" width="200" height="304" rx="32" fill="#0b0b0b" stroke="#5a5a5a" stroke-width="3"/><rect x="29" y="17" width="182" height="286" rx="25" fill="#f5f5f7"/>${inner}</svg>`;
 const svgAnel = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="#e8573f" stroke-width="4"><animate attributeName="stroke-opacity" values="1;.2;1" dur="1.3s" repeatCount="indefinite"/></circle>`;
@@ -380,7 +381,7 @@ function renderMenu() {
     <div class="wrap">${pwaBanner()}${openBanner()}${grupos.length ? '' : '<p class="empty">Nenhum produto cadastrado ainda.</p>'}
     ${promos.length ? `<h2 class="cath promocoes" id="cat-promocoes">🔥 Promoções</h2><div class="grid">${promos.map(card).join('')}</div>` : ''}
     ${novos.length ? `<h2 class="cath novidades" id="cat-novidades">✨ Novidades</h2><div class="grid">${novos.map(card).join('')}</div>` : ''}
-    ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2>${c === CAT_ENC ? '<p class="hint enc-hint">Feitos sob encomenda: escolha a data de retirada ao finalizar. Encomendas são pedidas separadas dos demais itens.</p>' : ''}<div class="grid">${ps.map(card).join('')}</div>`).join('')}<div class="pad"></div></div>
+    ${grupos.map(([c, ps]) => `<h2 class="cath" id="${catId(c)}">${esc(c)}</h2>${c === CAT_ENC ? '<p class="hint enc-hint">Feitos sob encomenda: escolha a data de retirada ao finalizar. Encomendas são pedidas separadas dos demais itens.</p>' : ''}<div class="grid">${ps.map(card).join('')}</div>`).join('')}${pwaLink()}<div class="pad"></div></div>
     ${n ? `<div class="cartbar" onclick="openCart()"><span>${ICON.bag} ${n} item(ns)</span><b>${money(tot)} · Ver pedido</b></div>` : ''}`;
   avalCheck();
 }
@@ -462,8 +463,10 @@ const sigItens = (items) => items.map((i) => i.productId + ':' + (i.flavor || ''
 async function checkout(method) {
   if (S.enviando) return; // já está enviando: ignora toques repetidos
   S.enviando = true;
-  document.querySelectorAll('.box .btn').forEach((b) => { b.disabled = true; });
-  try { await checkoutRun(method); } finally { S.enviando = false; document.querySelectorAll('.box .btn').forEach((b) => { b.disabled = false; }); }
+  const box = $('#modal .box');
+  if (box && !$('#modal').classList.contains('hidden')) box.innerHTML = `<div id="enviando" class="enviando"><div class="spin"></div><h2>${method === 'pix' ? 'Gerando seu Pix…' : method === 'infinitepay' ? 'Abrindo o pagamento…' : 'Enviando seu pedido…'}</h2><p class="lead">Aguarde alguns segundos e <b>não toque de novo</b>.</p></div>`;
+  try { await checkoutRun(method); }
+  finally { S.enviando = false; if ($('#enviando') && !$('#modal').classList.contains('hidden')) { if (S.cart.length) openCart(); else closeModal(); } } // validação falhou: volta para o carrinho
 }
 async function checkoutRun(method) {
   const st = Store.data.settings;
@@ -483,7 +486,6 @@ async function checkoutRun(method) {
   const parecido = S.openOrders.find((x) => sigItens(x.items) === sigItens(order.items) && Math.abs(x.total - order.total) < 0.005 && Date.now() - x.createdAt < 30 * 60000 && (x.clientPaid || x.method === 'maquininha'));
   if (parecido && !confirm('Você já fez um pedido igual (' + money(parecido.total) + ') há poucos minutos. Fazer outro mesmo assim?')) return;
   if (method === 'infinitepay') {
-    $('#modal .box').innerHTML = '<h2>Abrindo o pagamento…</h2><p>Aguarde um instante.</p>';
     try {
       const r = await fetch(IP_API + '/links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         handle: IP_HANDLE, order_nsu: order.id, redirect_url: location.origin + location.pathname, webhook_url: IP_WEBHOOK,
