@@ -458,7 +458,14 @@ function stockFail(e) {
   closeModal(); render();
   toast(String(e.message).startsWith('ESTOQUE:') ? e.message.slice(8) + '. Ajuste o pedido.' : 'Não foi possível enviar o pedido. Tente de novo.');
 }
+const sigItens = (items) => items.map((i) => i.productId + ':' + (i.flavor || '') + ':' + i.qty).sort().join(',');
 async function checkout(method) {
+  if (S.enviando) return; // já está enviando: ignora toques repetidos
+  S.enviando = true;
+  document.querySelectorAll('.box .btn').forEach((b) => { b.disabled = true; });
+  try { await checkoutRun(method); } finally { S.enviando = false; document.querySelectorAll('.box .btn').forEach((b) => { b.disabled = false; }); }
+}
+async function checkoutRun(method) {
   const st = Store.data.settings;
   if (method === 'pix' && !st.pixKey) return toast('Pix ainda não configurado pelo Matheus');
   const enc = S.cart[0]?.enc ? { data: S.enc.data, obs: (S.enc.obs || '').trim() } : null;
@@ -473,6 +480,8 @@ async function checkout(method) {
   if (paused.length) { S.cart = S.cart.filter((i) => !paused.includes(i)); render(); closeModal(); return toast(paused.map((i) => i.name).join(', ') + ' acabou e saiu do pedido'); }
   const order = { id: uid(), customer: S.user, items: calcPedido(S.cart).lines, total: cartTotal(), status: 'pending', method, createdAt: Date.now(), paidAt: null };
   if (enc) order.encomenda = enc;
+  const parecido = S.openOrders.find((x) => sigItens(x.items) === sigItens(order.items) && Math.abs(x.total - order.total) < 0.005 && Date.now() - x.createdAt < 30 * 60000 && (x.clientPaid || x.method === 'maquininha'));
+  if (parecido && !confirm('Você já fez um pedido igual (' + money(parecido.total) + ') há poucos minutos. Fazer outro mesmo assim?')) return;
   if (method === 'infinitepay') {
     $('#modal .box').innerHTML = '<h2>Abrindo o pagamento…</h2><p>Aguarde um instante.</p>';
     try {
@@ -648,10 +657,24 @@ function tabPrazo() {
   $('#tab').innerHTML = aviso + (Object.keys(by).length ? Object.entries(by).map(([c, os]) => `<div class="panel"><div class="row plain"><h3>${esc(c)}</h3><b class="c-gold">${money(os.reduce((a, o) => a + o.total, 0))}</b></div>
     ${os.map((o) => `<div class="row ${aConferir(o) ? 'conf' : ''}"><div><small>${new Date(o.createdAt).toLocaleString('pt-BR')} <span class="tag ${aConferir(o) ? 'conf' : ''}">${ordLabel(o)}</span>${encTag(o)}${dup.has(o.id) ? ` <span class="tag dup">${dup.get(o.id) ? 'duplicado: já existe um igual pago' : 'possível duplicado'}</span>` : ''}</small><br>${o.items.map((i) => `${i.qty}× ${esc(i.name)}${i.flavor ? ` (${esc(i.flavor)})` : ''}`).join(', ')}${subConf(o)}</div>
     <div class="r"><b>${money(o.total)}</b><div class="acts col">${aConferir(o) ? `<button class="btn ok sm" onclick="markPaid('${o.id}')">Confirmar Pix</button><button class="btn sec sm" onclick="naoCaiu('${o.id}')">Não caiu</button>` : `<button class="btn ok sm" onclick="markPaid('${o.id}')">Pago</button><button class="btn del sm" onclick="cancelOrd('${o.id}')">Cancelar</button>`}</div></div></div>`).join('')}
-    <div class="pfoot"><button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div></div>`).join('') : '<p class="empty">Nenhum pedido pendente.</p>');
+    <div class="pfoot">${temDup(os) ? `<button class="btn sec sm" onclick="limparDup('${esc(c).replace(/'/g, "\'")}')">Cancelar duplicados (manter 1)</button> ` : ''}<button class="btn sec sm" onclick="payAll('${esc(c).replace(/'/g, "\\'")}')">Receber tudo de ${esc(c)}</button></div></div>`).join('') : '<p class="empty">Nenhum pedido pendente.</p>');
 }
 // Baixa final: registra quem conferiu e por onde o dinheiro entrou
 const baixa = (o) => ({ ...o, status: 'paid', paidAt: Date.now(), paidBy: S.user, paidWith: o.paidWith || (o.method === 'pix' ? 'pix' : o.method === 'maquininha' ? 'maquininha' : '') });
+// Pedidos pendentes idênticos (mesmo cliente, mesmos itens e valor)
+const grupoDup = (os) => { const g = {}; os.filter((o) => o.status === 'pending').forEach((o) => (g[sigItens(o.items) + '|' + o.total] ||= []).push(o)); return Object.values(g).filter((l) => l.length > 1); };
+const temDup = (os) => grupoDup(os).length > 0;
+async function limparDup(c) {
+  const grupos = grupoDup(Store.data.orders.filter((o) => o.customer === c)), extra = grupos.reduce((a, l) => a + l.length - 1, 0);
+  if (!extra) return toast('Nenhum duplicado');
+  if (!confirm('Cancelar ' + extra + ' pedido(s) duplicado(s) de ' + c + '? Em cada grupo fica 1 pedido (o que o cliente avisou que pagou) e as unidades dos outros voltam ao estoque.')) return;
+  let n = 0;
+  for (const l of grupos) {
+    const ord = l.slice().sort((a, b) => Number(!!b.clientPaid) - Number(!!a.clientPaid) || (a.clientPaidAt || 1e15) - (b.clientPaidAt || 1e15) || a.createdAt - b.createdAt);
+    for (const o of ord.slice(1)) { try { await Store.cancelOrder(o, 'duplicado'); n++; } catch (e) {} }
+  }
+  render(); toast(n + ' duplicado(s) cancelado(s)');
+}
 async function markPaid(id) { const o = Store.data.orders.find((x) => x.id === id); await Store.put('orders', baixa(o)); toast(aConferir(o) ? 'Pix conferido e pedido baixado' : 'Marcado como pago'); }
 async function payAll(c) { if (!confirm(`Marcar tudo de ${c} como pago?`)) return; for (const o of Store.data.orders.filter((x) => x.customer === c && x.status !== 'paid' && x.status !== 'cancelled')) await Store.put('orders', baixa(o)); }
 async function naoCaiu(id) {
