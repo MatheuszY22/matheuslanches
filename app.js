@@ -588,9 +588,18 @@ function avisoDuplicado(o, method) {
     <div class="cmp"><div class="cmpb velho"><small>PEDIDO ANTERIOR (não pago)</small><div>${itemsText(o)}</div><b>${money(o.total)}</b></div>
     <div class="cmpb novo"><small>PEDIDO NOVO (no carrinho)</small><div>${ntxt}</div><b>${money(novo.totalC / 100)}</b></div></div>
     <p class="hint">Confira os valores: só um deles será cobrado, o que você escolher abaixo.</p>
-    <div class="stack"><button class="btn" onclick="cancelarETrocar('${o.id}','${method}')">Cancelar o anterior e pagar o NOVO (${money(novo.totalC / 100)})</button>
+    <div class="stack"><button class="btn ok" onclick="jaPagueiEContinuar('${o.id}','${method}')">✔ Esse anterior eu JÁ PAGUEI: avisar a loja e fazer o novo</button>
+    <button class="btn" onclick="cancelarETrocar('${o.id}','${method}')">Cancelar o anterior e pagar o NOVO (${money(novo.totalC / 100)})</button>
     <button class="btn sec" onclick="continuar('${o.id}')">Pagar só o ANTERIOR (${money(o.total)})</button>
     <button class="btn sec" onclick="closeModal()">Voltar</button></div>`);
+}
+// O cliente pagou o pedido anterior mas não tocou em "Já paguei": avisa a loja (a gerência confere o comprovante) e libera o novo pedido
+async function jaPagueiEContinuar(id, method) {
+  let o; try { o = await getOrder(id); } catch (e) { return toast('Sem conexão. Tente de novo.'); }
+  if (o && o.status === 'pending' && !o.clientPaid) {
+    try { await Store.put('orders', { ...o, clientPaid: true, clientPaidAt: Date.now() }); } catch (e) { return toast('Não foi possível avisar. Tente de novo.'); }
+  }
+  await checkOpen(); closeModal(); openCart(); checkout(method);
 }
 async function cancelarETrocar(id, method) {
   if (!confirm('Cancelar o pedido anterior? Se você já pagou, não cancele: fale com o Matheus.')) return;
